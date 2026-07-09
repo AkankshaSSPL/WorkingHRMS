@@ -1,0 +1,50 @@
+# ==========================
+# Python
+# ==========================
+backend/.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+
+# ==========================
+# Node.js
+# ==========================
+Frontend/node_modules/
+Frontend/dist/
+
+# ==========================
+# Environment files
+# ==========================
+backend/.env
+Frontend/.env
+.env
+*.env
+
+# Keep example env files
+!backend/.env.example
+!Frontend/.env.example
+
+# ==========================
+# Local database / backups
+# ==========================
+hrmsdb8072026
+*.db
+*.sqlite
+*.sqlite3
+
+# ==========================
+# Logs
+# ==========================
+*.log
+
+# ==========================
+# OS files
+# ==========================
+.DS_Store
+Thumbs.db
+
+# ==========================
+# IDE
+# ==========================
+.vscode/
+.idea/
