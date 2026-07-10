@@ -19,12 +19,11 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column("leave_approvals", sa.Column("tenant_id", postgresql.UUID(as_uuid=True), nullable=True))
-    op.create_index("ix_leave_approvals_deleted_at", "leave_approvals", ["deleted_at"])
-    op.create_index("ix_leave_approvals_tenant_id", "leave_approvals", ["tenant_id"])
+    # No-op: revision 20260605_0014 already creates leave_approvals with the
+    # tenant_id column and the ix_leave_approvals_tenant_id / _deleted_at indexes.
+    pass
 
 
 def downgrade() -> None:
-    op.drop_index("ix_leave_approvals_tenant_id", table_name="leave_approvals")
-    op.drop_index("ix_leave_approvals_deleted_at", table_name="leave_approvals")
-    op.drop_column("leave_approvals", "tenant_id")
+    # No-op: see upgrade().
+    pass

@@ -27,7 +27,6 @@ Frontend/.env
 # ==========================
 # Local database / backups
 # ==========================
-hrmsdb8072026
 *.db
 *.sqlite
 *.sqlite3
