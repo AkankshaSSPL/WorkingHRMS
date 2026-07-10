@@ -1,0 +1,614 @@
+{
+  "$meta": {
+    "title": "Agentic HRMS — Machine-Readable Architecture Map",
+    "purpose": "Single source of truth describing the ACTUAL code of this repo (backend FastAPI + SQLAlchemy + Alembic + LangGraph agents; frontend React + Vite + TS). Built for pasting into chat-based AI tools (ChatGPT / DeepSeek) so they can debug, extend, and modify the code correctly without opening the repo.",
+    "generated_from": "static read of the source on the commit below — no assumptions; verified facts only",
+    "last_synced_git_commit": "d3a35a5",
+    "last_synced_git_commit_full": "d3a35a575611f46b66067fb67a7f7e2a05f39c8a",
+    "repo_root_abs": "d:/gunesh_dev/dev/temp/WorkingHRMS",
+    "all_paths_are": "relative to repo root unless marked abs",
+    "how_to_use_with_ai": [
+      "Paste this whole file (or, for smaller-context tools, paste only the relevant top-level section named by docs/architecture.index.md) as context before asking the tool to change code.",
+      "Tell the tool: 'Only touch the files named in the relevant section. Match the existing pattern shown. Cite file:line in your answer.'",
+      "For any change, first read the matching entry under `playbooks` — it lists the exact files and the existing function/pattern to copy.",
+      "After the tool produces a code change, run the matching `update_protocol` step so this doc stays in sync."
+    ],
+    "conventions_for_ai": [
+      "Never invent file paths, table names, columns, routes, or permission codes — every one that exists is listed here. If something is not here, say so instead of guessing.",
+      "Backend Python: SQLAlchemy 2.0 typed models (Mapped[...] / mapped_column), Pydantic v2 (model_config, from_attributes=True). Windows dev box; run backend commands through backend/.venv.",
+      "Frontend: TypeScript strict, path alias '@' -> Frontend/src, no axios (custom fetch client in services/api.ts), TanStack Query for server state, Zustand for auth/UI state.",
+      "Mutations are RBAC-gated on the backend via require_permissions(...) AND hidden on the frontend via hasPermission(...) — change BOTH when adding a gated feature.",
+      "Soft delete everywhere: set deleted_at, never hard-delete; all list queries filter deleted_at IS NULL.",
+      "Most agent request/response Pydantic schemas live INSIDE each agent package (app/agents/<x>/schemas.py), NOT in app/schemas/."
+    ]
+  },
+
+  "runbook": {
+    "prerequisites": {
+      "python": "3.12 (venv at backend/.venv)",
+      "node": "18+ (repo built on Node 22 / npm 10)",
+      "postgres": "16 running locally; database named 'hrms' must exist before migrating"
+    },
+    "backend_setup": [
+      "cd backend",
+      "py -3.12 -m venv .venv",
+      ".\\.venv\\Scripts\\Activate.ps1",
+      "pip install -r requirements.txt",
+      "copy .env.example .env  (then edit DATABASE_URL etc.)",
+      "alembic upgrade head",
+      "python -m scripts.seed_auth   (NOT `python scripts/seed_auth.py` — that raises ModuleNotFoundError: No module named 'app')",
+      "uvicorn app.main:app --host 127.0.0.1 --port 8000"
+    ],
+    "frontend_setup": [
+      "cd Frontend  (capital F on disk)",
+      "copy .env.example .env  (set VITE_API_BASE_URL to match the backend, e.g. http://127.0.0.1:8000/api/v1)",
+      "npm install",
+      "npm run dev -- --host 127.0.0.1"
+    ],
+    "ports": { "backend": 8000, "frontend": 5173 },
+    "urls": {
+      "backend_root": "http://127.0.0.1:8000/",
+      "health": "http://127.0.0.1:8000/api/v1/health",
+      "swagger": "http://127.0.0.1:8000/docs",
+      "redoc": "http://127.0.0.1:8000/redoc",
+      "openapi": "http://127.0.0.1:8000/api/v1/openapi.json",
+      "frontend": "http://127.0.0.1:5173/"
+    },
+    "env_vars": {
+      "backend_.env": {
+        "file": "backend/.env (gitignored; template backend/.env.example). Loaded by app/core/config.py Settings(env_file='.env').",
+        "keys": {
+          "PROJECT_NAME": "display name",
+          "ENVIRONMENT": "development | production",
+          "DATABASE_URL": "SQLAlchemy URL, e.g. postgresql+psycopg://postgres:password@localhost:5432/hrms",
+          "JWT_SECRET_KEY": "HS256 signing secret",
+          "ACCESS_TOKEN_EXPIRE_MINUTES": "default 60 (note: config field access_token_expire_minutes has no env alias — see known_issues)",
+          "REFRESH_TOKEN_EXPIRE_DAYS": "default 7",
+          "ADMIN_EMAIL / ADMIN_PASSWORD / ADMIN_NAME": "seeded superuser (scripts.seed_auth)",
+          "OPENAI_API_KEY": "enables the LLM intent classifier; if absent the system falls back to rule-based intent",
+          "OPENAI_INTENT_MODEL": "default gpt-4o-mini",
+          "OPENAI_INTENT_ENABLED": "true/false",
+          "INTENT_CONFIDENCE_THRESHOLD": "default 0.55",
+          "RESUME_STORAGE_DIR": "default storage/resumes",
+          "MAX_RESUME_UPLOAD_MB": "default 10"
+        }
+      },
+      "frontend_.env": {
+        "file": "Frontend/.env (gitignored; template Frontend/.env.example)",
+        "keys": { "VITE_API_BASE_URL": "backend API base incl. /api/v1. Code fallback if unset is http://127.0.0.1:8001/api/v1 (see known_issues — the :8001 fallback mismatches the documented :8000 backend)." }
+      }
+    },
+    "db": {
+      "migrate": "cd backend && alembic upgrade head   (alembic env.py pulls the URL from settings.database_url, overriding alembic.ini)",
+      "seed": "cd backend && python -m scripts.seed_auth",
+      "head_revision": "20260612_0024",
+      "admin_credentials": "from .env ADMIN_EMAIL / ADMIN_PASSWORD (example: admin@example.com / ChangeMe123!) — superuser with all permissions",
+      "reset_hint": "drop & recreate the DB then `alembic upgrade head` again; there is no down-to-base convenience script"
+    },
+    "smoke_scripts": {
+      "backend/scripts/seed_auth.py": "seed RBAC + admin (run as `python -m scripts.seed_auth`)",
+      "backend/scripts/smoke_agent_command.py": "TestClient: login, POST /agent-command/send x3, list workflows",
+      "backend/scripts/smoke_agent_runtime.py": "TestClient: login, GET /agents/registry, POST /agents/command, fetch workflow events",
+      "backend/scripts/smoke_approval_engine.py": "TestClient: create approval, list pending, approve, resume-workflow",
+      "backend/scripts/cleanup_onboarding_data.py": "one-off data-repair utility (backfills names, strips generated identifiers, dedups employees)"
+    }
+  },
+
+  "architecture_overview": {
+    "stacks": {
+      "backend": "FastAPI 0.115, SQLAlchemy 2.0, Alembic 1.15, psycopg 3, Pydantic v2 / pydantic-settings, python-jose (JWT), bcrypt, LangGraph 0.4 + LangChain 0.3 + langchain-openai, pdfplumber + python-docx (resume parsing)",
+      "frontend": "React 19, Vite 6, TypeScript 5.8, react-router-dom 6, Zustand 5, TanStack Query 5 + Table 8, Tailwind 3.4, framer-motion, lucide-react"
+    },
+    "request_flow": "HTTP -> CORSMiddleware -> AuthContextMiddleware (best-effort: sets request.state.user_id from a valid access token, never rejects) -> api_router mounted at /api/v1 -> endpoint. Endpoints that need identity/permissions use FastAPI Depends: get_current_user / require_permissions from app/api/deps.py (these DO reject with 401/403).",
+    "agent_command_flow": "Frontend AgentCommandPage -> POST /api/v1/agent-command/send -> coordinator_agent/command_api.py -> CoordinatorRuntimeService.submit_command (coordinator_agent/service.py): (1) ExecutionTracker.start_run creates an AgentRun; (2) natural_language_extractor.extract(command) => IntentExtraction (rules + optional OpenAI); (3) compute fallback route (_analyze_intent keyword router) and extraction route (_route_from_extraction); (4) if missing_fields OR confidence<INTENT_CONFIDENCE_THRESHOLD => clarify; (5) route precedence: explicit 'revise salary' > extraction route > fallback route; (6) _invoke_domain_agent calls the domain agent's .execute(); (7) if the action is a CRITICAL_ACTION or the agent returns approval_request_id => create ApprovalRequest and set workflow WAITING_APPROVAL. Workflow state is serialized onto AgentRun.metadata_json keyed by AgentRun.correlation_id (== public workflow_id).",
+    "approval_governance_flow": "Mutating/critical agent actions do not execute immediately. ApprovalEngineService.create_approval writes an ApprovalRequest (status PENDING, execution_status WAITING_FOR_APPROVAL) + ApprovalEvent + AuditLog. A human hits POST /approvals/{id}/approve then POST /approvals/{id}/resume-workflow. resume_workflow looks up the executor keyed '{module}.{action}' in approval_agent/handlers.py::handler_registry, runs it, marks EXECUTED, and _resume_agent_run patches the originating AgentRun to COMPLETED with new events (e.g. EMPLOYEE_CREATED, LEAVE_APPROVED). Every transition writes AuditLog + ApprovalEvent.",
+    "auth_flow": "POST /auth/login (OAuth2 password form) -> AuthService.authenticate -> issue_tokens => access JWT (type 'access', 60 min) + refresh JWT (type 'refresh', 7 days; SHA-256 hash stored in refresh_tokens). Frontend keeps access token in memory (Zustand) and refresh token in sessionStorage. On any 401 the fetch client calls refreshSession() (POST /auth/refresh, which rotates+revokes) and retries once. RBAC: user.permissions (union of role permission codes, or ALL if is_superuser) gate both backend routes (require_permissions) and frontend routes/sidebar (hasPermission)."
+  },
+
+  "backend": {
+    "entrypoint": {
+      "file": "backend/app/main.py",
+      "app": "FastAPI(title=settings.project_name, version=settings.app_version, docs_url='/docs', redoc_url='/redoc', openapi_url='/api/v1/openapi.json', lifespan=lifespan)",
+      "lifespan": "calls configure_logging()",
+      "middleware_order": ["CORSMiddleware (origins=settings.cors_origins, allow_credentials, allow all methods/headers)", "AuthContextMiddleware"],
+      "mounts": "api_router at prefix settings.api_v1_prefix ('/api/v1')",
+      "extra_routes": "GET / -> {'service': project_name, 'status': 'ready'}"
+    },
+    "conventions": {
+      "base_model": "backend/app/models/base.py: Base(DeclarativeBase); BaseModel(Base, __abstract__=True) gives EVERY table 5 columns: id (UUID PK default uuid4), tenant_id (UUID nullable, indexed), created_at (timestamptz server_default now()), updated_at (timestamptz server_default now(), onupdate now()), deleted_at (timestamptz nullable, indexed = soft-delete marker).",
+      "soft_delete": "Records are soft-deleted by setting deleted_at = now(). Reads filter `deleted_at IS NULL`. Multi-tenant scaffolding exists (tenant_id) but is not yet enforced in queries.",
+      "rbac_dependencies": "app/api/deps.py: get_current_user (decodes access JWT, loads User with roles+permissions, rejects inactive), require_permissions(*codes) (superuser bypass else set(codes) subset of user perms), require_roles(*names) (defined but currently unused by app/api endpoints).",
+      "audit_log_pattern": "Mutating endpoints in employees/documents/masters capture current_user via Depends(get_current_user) and write an AuditLog(entity_type, entity_id, action, old_value, new_value, performed_by). Payroll endpoints DO NOT write AuditLog (known gap).",
+      "agent_registry_pattern": "Domain agents subclass BaseAgent (app/agents/shared/base_agent.py) and are registered into the singleton agent_registry (app/agents/shared/agent_registry.py) by register_placeholder_agents() in coordinator_agent/service.py at import time. Approval executors register into handler_registry (approval_agent/handlers.py) keyed '{module}.{action}'.",
+      "schema_location": "Cross-cutting schemas in app/schemas/{auth,common}.py; almost all feature schemas live in app/agents/<agent>/schemas.py and endpoint-local Pydantic classes inside the endpoint files."
+    },
+    "core": {
+      "config": {
+        "file": "backend/app/core/config.py",
+        "class": "Settings(BaseSettings) with model_config=SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')",
+        "accessor": "get_settings() is @lru_cache; module-level `settings = get_settings()`",
+        "fields": {
+          "project_name": "'Agentic HRMS'",
+          "app_version": "'0.1.0'",
+          "environment": "'development'",
+          "api_v1_prefix": "'/api/v1'",
+          "database_url": "env DATABASE_URL, default postgresql+psycopg://hrms:hrms@localhost:5432/hrms",
+          "jwt_secret_key": "env JWT_SECRET_KEY",
+          "jwt_algorithm": "'HS256'",
+          "access_token_expire_minutes": "60 (no env alias)",
+          "refresh_token_expire_days": "env REFRESH_TOKEN_EXPIRE_DAYS, default 7",
+          "admin_email/admin_password/admin_name": "env ADMIN_*",
+          "openai_api_key": "env OPENAI_API_KEY, default None",
+          "openai_intent_model": "env, default gpt-4o-mini",
+          "openai_intent_enabled": "env, default True",
+          "intent_confidence_threshold": "env, default 0.55",
+          "cors_origins": "['http://localhost:5173','http://127.0.0.1:5173']",
+          "resume_storage_dir": "env RESUME_STORAGE_DIR, default storage/resumes",
+          "max_resume_upload_mb": "env MAX_RESUME_UPLOAD_MB, default 10"
+        }
+      },
+      "security": {
+        "file": "backend/app/core/security.py",
+        "functions": {
+          "verify_password(plain, hashed)->bool": "bcrypt.checkpw",
+          "get_password_hash(password)->str": "bcrypt.hashpw + gensalt",
+          "create_token(subject, token_type, expires_delta, jti=None)->str": "encodes {sub,type,exp,jti} with jwt_secret_key/HS256",
+          "create_access_token(subject, expires_delta=None)": "type 'access', default 60 min",
+          "create_refresh_token(subject, expires_delta=None)": "type 'refresh', default 7 days",
+          "decode_token(token)->dict": "jwt.decode; wraps JWTError into ValueError('Invalid token')",
+          "token_hash(token)->str": "sha256 hexdigest (stored in refresh_tokens.token_hash)"
+        }
+      },
+      "auth_middleware": {
+        "file": "backend/app/core/auth_middleware.py",
+        "class": "AuthContextMiddleware(BaseHTTPMiddleware)",
+        "behavior": "dispatch sets request.state.user_id=None, parses 'Authorization: Bearer <token>', decodes it, and if type=='access' sets request.state.user_id=payload['sub']. Swallows ValueError. NEVER rejects a request — authorization is enforced by the deps, not here."
+      },
+      "logging": { "file": "backend/app/core/logging.py", "function": "configure_logging() -> logging.basicConfig INFO, format '%(asctime)s %(levelname)s [%(name)s] %(message)s', stdout" }
+    },
+    "db": {
+      "session": { "file": "backend/app/db/session.py", "engine": "create_engine(settings.database_url, pool_pre_ping=True)", "SessionLocal": "sessionmaker(autocommit=False, autoflush=False, bind=engine)", "get_db": "generator dependency, yields a Session, closes in finally" },
+      "base_registry": { "file": "backend/app/db/base.py", "role": "Imports/re-exports every ORM model + Base so Alembic target_metadata=Base.metadata sees all tables. When you add a new model file you MUST import it here (or in a module this imports) or migrations/autogenerate will miss it." }
+    },
+    "models": {
+      "note": "34 tables total. All inherit the 5 BaseModel columns (id, tenant_id, created_at, updated_at, deleted_at). Only the extra columns are listed below. Enums are Python StrEnum stored as String.",
+      "auth_rbac": {
+        "file": "backend/app/models/auth/models.py",
+        "tables": {
+          "users": { "class": "User", "columns": "email String(320) unique/idx NN; password_hash Text NN; first_name/last_name String(120) NN; is_active Bool=T; is_superuser Bool=F; last_login_at tz", "indexes": "ix_users_active_deleted(is_active,deleted_at)", "relationships": "roles (secondary user_roles, selectin); refresh_tokens (cascade delete-orphan); employee_profile (1:1 Employee)", "properties": "full_name" },
+          "roles": { "class": "Role", "columns": "name String(100) unique/idx NN; description Text", "relationships": "users (secondary user_roles); permissions (secondary role_permissions, selectin)" },
+          "permissions": { "class": "Permission", "columns": "code String(120) unique/idx NN; name String(160) NN; description Text", "relationships": "roles (secondary role_permissions)" },
+          "user_roles": { "class": "UserRole", "columns": "user_id FK users.id CASCADE NN; role_id FK roles.id CASCADE NN; UniqueConstraint(user_id,role_id)" },
+          "role_permissions": { "class": "RolePermission", "columns": "role_id FK roles.id CASCADE NN; permission_id FK permissions.id CASCADE NN; UniqueConstraint(role_id,permission_id)" },
+          "refresh_tokens": { "class": "RefreshToken", "columns": "user_id FK users.id CASCADE NN; token_hash String(64) NN idx unique; expires_at tz NN; revoked_at tz" }
+        }
+      },
+      "employee_org_attendance_leave_recruitment_notifications": {
+        "file": "backend/app/models/employee/models.py",
+        "enums": "EmploymentStatus(ACTIVE/PROBATION/NOTICE_PERIOD/EXITED/SUSPENDED), EmploymentType(FULL_TIME/CONSULTANT), Gender(MALE/FEMALE/OTHER/UNDISCLOSED), CandidateStatus(NEW/SCREENING/INTERVIEW/OFFERED/HIRED/REJECTED/ARCHIVED), DocumentStatus(PENDING/VERIFIED/REJECTED), AssetStatus(ASSIGNED/RETURN_PENDING/RETURNED/LOST), AttendanceStatus(PRESENT/ABSENT/HALF_DAY/WEEKLY_OFF/ON_DUTY/WORK_FROM_HOME/HOLIDAY), LeaveRequestStatus(PENDING/APPROVED/REJECTED/CANCELLED), LeaveCategory(PAID/UNPAID/WFH), NotificationStatus(UNREAD/READ/ARCHIVED)",
+        "tables": {
+          "leave_types": { "class": "LeaveType", "columns": "name String(120) NN (uq_leave_types_name); code String(40) NN idx; category String(40)=PAID; annual_allocation Numeric(8,2)=0; carry_forward_allowed Bool=F; requires_approval Bool=T; affects_payroll Bool=F; active Bool=T; is_paid Bool=T; annual_quota Numeric(8,2)=0; description Text" },
+          "departments": { "class": "Department", "columns": "name String(160) NN unique; code String(60) idx; description Text; parent_department_id self-FK; active Bool=T idx", "relationships": "parent_department (self); employees" },
+          "designations": { "class": "Designation", "columns": "title String(160) NN unique; code String(60) idx; level String(80) idx; description Text", "relationships": "employees" },
+          "employees": { "class": "Employee", "columns": "user_id FK users.id unique nullable; first_name/last_name String(120) nullable; employee_code String(80) unique; joining_date Date NN; employment_status String(40)=ACTIVE; employment_type String(40)=FULL_TIME idx; department_id FK; designation_id FK; reporting_manager_id self-FK; official_email String(320) unique; personal_email/phone idx; dob Date; gender String(30); emergency_contact JSONB; bank_account_number String(80); ifsc_code String(40); current_salary Numeric(14,2); pan_number idx; aadhaar_number; uan_number; profile_photo Text", "indexes": "(department_id,employment_status), reporting_manager_id", "relationships": "user, department, designation, reporting_manager(self), documents, assets, attendance_records, leave_requests, leave_balances, payroll_items" },
+          "candidates": { "class": "Candidate", "columns": "first_name/last_name String(120); email idx; phone idx; source String(120) idx; resume_url Text; parsed_resume_json JSONB; current_company String(180); expected_ctc Numeric(14,2); notice_period String(80); candidate_status String(40)=NEW" },
+          "resume_uploads": { "class": "ResumeUpload", "columns": "candidate_id FK candidates.id; original_filename String(255) NN; stored_filename String(255) NN unique; storage_path Text NN; content_type String(120) NN; file_size Integer NN; uploaded_by FK users.id; parsed_text_preview Text; parsed_json JSONB" },
+          "employee_documents": { "class": "EmployeeDocument", "columns": "employee_id FK employees.id CASCADE NN; document_type String(120) NN; document_url Text NN; status String(40)=PENDING; verified_by FK users.id; verified_at tz", "relationships": "employee" },
+          "employee_assets": { "class": "EmployeeAsset", "columns": "employee_id FK CASCADE NN; asset_type String(120) NN; asset_code String(120) NN idx; assigned_at/returned_at tz; asset_status String(40)=ASSIGNED; metadata_json JSONB" },
+          "attendance_records": { "class": "AttendanceRecord", "columns": "employee_id FK CASCADE NN; attendance_date Date NN; check_in_at/check_out_at tz; check_in_time/check_out_time Time; status String(40) NN; total_hours Numeric(6,2); remarks Text; source String(80); metadata_json JSONB; UniqueConstraint(employee_id,attendance_date)" },
+          "leave_requests": { "class": "LeaveRequest", "columns": "employee_id FK CASCADE NN; leave_type_id FK leave_types.id nullable; leave_type String(80) NN (denormalized); from_date/to_date Date nullable; start_date/end_date Date NN; total_days Numeric(6,2) NN; reason Text; status String(40)=PENDING; requested_by/approved_by FK users.id; approved_at tz", "relationships": "employee, leave_type_ref, approvals(cascade)" },
+          "leave_balances": { "class": "LeaveBalance", "columns": "employee_id FK CASCADE NN; leave_type_id FK; leave_type String(80) NN; year Integer NN; allocated/opening_balance/accrued/used/remaining Numeric(8,2)=0; UniqueConstraints (employee_id,leave_type,year) and (employee_id,leave_type_id,year)" },
+          "leave_approvals": { "class": "LeaveApproval", "columns": "leave_request_id FK CASCADE NN; status String(40)=PENDING; approver_id FK users.id; comments Text; action_date tz" },
+          "notifications": { "class": "Notification", "columns": "user_id FK users.id CASCADE NN; title String(180) NN; message Text NN; channel String(60); status String(40)=UNREAD; payload_json JSONB" }
+        }
+      },
+      "payroll_salary": {
+        "file": "backend/app/models/payroll/models.py",
+        "enums": "PayrollRunStatus(DRAFT/PENDING_APPROVAL/APPROVED/BANK_SHEET_GENERATED/COMPLETED), SalaryAssignmentStatus(DRAFT/PENDING_APPROVAL/ACTIVE/REJECTED/EXPIRED), SalaryApprovalStatus(PENDING/APPROVED/REJECTED), SalaryRevisionType(ASSIGNMENT/INCREASE/DECREASE/STRUCTURE_CHANGE)",
+        "tables": {
+          "payroll_runs": { "class": "PayrollRun", "columns": "month Int NN; year Int NN; status String(40)=DRAFT; generated_by/approved_by FK users.id; approved_at tz; UniqueConstraint(month,year)", "relationships": "items(cascade)" },
+          "payroll_run_items": { "class": "PayrollRunItem", "columns": "payroll_run_id FK CASCADE NN; employee_id FK NN; gross_salary Numeric(14,2) NN; deductions Numeric(14,2)=0; lop_days Numeric(6,2)=0; net_salary Numeric(14,2) NN; bank_account_number String(80) NN; ifsc_code String(40) NN; UniqueConstraint(payroll_run_id,employee_id)" },
+          "salary_components": { "class": "SalaryComponent", "columns": "name String(120) NN unique; code String(50) NN idx unique; type String(40) NN (earning/deduction); calculation_type String(40) NN (fixed/percentage/formula); calculation_value Numeric(14,2); formula String(500); reference_component_code String(50); taxable Bool=T; active Bool=T" },
+          "salary_structures": { "class": "SalaryStructure", "columns": "name String(120) NN; code String(50) NN idx unique; description String(500); active Bool=T", "relationships": "items(cascade)" },
+          "salary_structure_items": { "class": "SalaryStructureItem", "columns": "structure_id FK CASCADE NN; component_code String(50) NN; calculation_type String(40) NN; calculation_value Numeric(14,2); formula String(500); reference_component_code String(50); sort_order Int=0" },
+          "employee_salary_assignments": { "class": "EmployeeSalaryAssignment", "columns": "employee_id FK CASCADE NN; salary_structure_id FK NN; gross_salary Numeric(14,2) NN; effective_from Date NN; effective_to Date; status String(40)=PENDING_APPROVAL; approved_by FK users.id", "relationships": "employee, salary_structure, approvals(cascade)" },
+          "salary_revision_history": { "class": "SalaryRevisionHistory", "columns": "employee_id FK CASCADE NN; old_salary Numeric(14,2); new_salary Numeric(14,2) NN; revision_type String(40) NN; reason Text; effective_from Date NN; approved_by FK users.id" },
+          "salary_assignment_approvals": { "class": "SalaryAssignmentApproval", "columns": "assignment_id FK CASCADE NN; status String(40)=PENDING; approver_id FK users.id; approved_at tz; comments Text" }
+        }
+      },
+      "approvals": {
+        "file": "backend/app/models/approvals/models.py",
+        "enums": "ApprovalStatus(PENDING/APPROVED/REJECTED/NEEDS_CHANGES/EXECUTED/FAILED), ApprovalExecutionStatus(WAITING_FOR_APPROVAL/READY_TO_RESUME/RESUMING/EXECUTED/BLOCKED/FAILED), ApprovalEventType(CREATED/APPROVED/REJECTED/NEEDS_CHANGES/WORKFLOW_RESUMED/EXECUTED/FAILED)",
+        "tables": {
+          "approval_requests": { "class": "ApprovalRequest", "columns": "module_name String(120) NN; action_name String(160) NN; payload_json JSONB; status String(40)=PENDING; workflow_id String(160); workflow_state_json JSONB; approval_reason Text; execution_status String(40)=WAITING_FOR_APPROVAL; requested_by/approved_by/rejected_by FK users.id; resumed_at/executed_at tz", "relationships": "events(cascade)" },
+          "approval_events": { "class": "ApprovalEvent", "columns": "approval_request_id FK CASCADE NN; event_type String(40) NN; message Text NN; payload_json JSONB; performed_by FK users.id" }
+        }
+      },
+      "agents": {
+        "file": "backend/app/models/agents/models.py",
+        "enums": "AgentRunStatus(PENDING/RUNNING/WAITING_FOR_APPROVAL/COMPLETED/FAILED/CANCELLED), AgentStepStatus(PENDING/RUNNING/COMPLETED/FAILED/SKIPPED)",
+        "tables": {
+          "agent_runs": { "class": "AgentRun", "columns": "agent_name String(160) NN; status String(40)=PENDING; started_at/completed_at tz; requested_by FK users.id; correlation_id String(120) idx (== public workflow_id); metadata_json JSONB (holds workflow_state, events, result)", "relationships": "steps(cascade)" },
+          "agent_steps": { "class": "AgentStep", "columns": "agent_run_id FK CASCADE NN; step_name String(180) NN; step_status String(40)=PENDING; input_json/output_json JSONB" }
+        }
+      },
+      "audit": { "file": "backend/app/models/audit/models.py", "tables": { "audit_logs": { "class": "AuditLog", "columns": "entity_type String(120) NN; entity_id UUID nullable; action String(120) NN; old_value/new_value JSONB; performed_by FK users.id" } } },
+      "lookup": { "file": "backend/app/models/lookup.py", "tables": { "lookup_values": { "class": "LookupValue", "columns": "category String(120) NN; code String(120) NN; label String(180) NN; sort_order Int=0; active Bool=T; metadata_json JSONB; UniqueConstraint(category,code)" } } }
+    },
+    "api": {
+      "mount": "app/main.py mounts api_router (app/api/v1/router.py) at /api/v1. Router groups below list their mount prefix and source file. Full path = /api/v1 + prefix + route.",
+      "router_file": "backend/app/api/v1/router.py",
+      "groups": {
+        "auth": { "prefix": "/auth", "file": "backend/app/api/v1/endpoints/auth.py", "routes": [
+          { "method": "POST", "path": "/api/v1/auth/login", "handler": "login", "req": "OAuth2PasswordRequestForm", "res": "TokenResponse", "auth": "none" },
+          { "method": "POST", "path": "/api/v1/auth/refresh", "handler": "refresh", "req": "RefreshRequest", "res": "TokenResponse", "auth": "none" },
+          { "method": "POST", "path": "/api/v1/auth/logout", "handler": "logout", "req": "LogoutRequest", "res": "{status:ok}", "auth": "none" },
+          { "method": "GET", "path": "/api/v1/auth/me", "handler": "me", "res": "CurrentUserResponse", "auth": "get_current_user" }
+        ]},
+        "health": { "prefix": "/health", "file": "backend/app/api/v1/endpoints/health.py", "routes": [ { "method": "GET", "path": "/api/v1/health", "handler": "health_check", "res": "{status:ok,database:connected}", "auth": "none", "note": "executes SELECT 1" } ]},
+        "employees": { "prefix": "/employees", "file": "backend/app/api/v1/endpoints/employees.py", "logic_delegated_to": "app/agents/employee_agent/tools.py", "routes": [
+          { "method": "GET", "path": "/api/v1/employees", "handler": "employees", "query": "q,department,status,page,page_size", "res": "EmployeeListResponse", "auth": "require_permissions('employees:view')" },
+          { "method": "GET", "path": "/api/v1/employees/form-options", "handler": "employee_form_options", "auth": "require_permissions('employees:view')" },
+          { "method": "GET", "path": "/api/v1/employees/{employee_id}", "handler": "employee_detail", "auth": "require_permissions('employees:view')", "errors": "404 if missing" },
+          { "method": "POST", "path": "/api/v1/employees", "handler": "create_employee", "req": "EmployeeCreateRequest", "auth": "require_permissions('employees:view') + current_user", "audit": "employee.created_from_form" },
+          { "method": "PATCH", "path": "/api/v1/employees/{employee_id}", "handler": "update_employee", "req": "EmployeeUpdateRequest", "auth": "require_permissions('employees:view') + current_user", "audit": "employee.updated_from_form" },
+          { "method": "DELETE", "path": "/api/v1/employees/{employee_id}", "handler": "delete_employee", "auth": "require_permissions('employees:view') + current_user", "audit": "employee.deleted_from_form", "note": "soft delete" }
+        ]},
+        "documents": { "prefix": "/documents", "file": "backend/app/api/v1/endpoints/documents.py", "routes": [
+          { "method": "GET", "path": "/api/v1/documents", "handler": "list_documents", "auth": "require_permissions('documents:view')" },
+          { "method": "POST", "path": "/api/v1/documents", "handler": "create_document", "req": "DocumentCreateRequest", "auth": "require_permissions('documents:view') + current_user", "audit": "document.created_from_form", "errors": "404 if employee missing" }
+        ]},
+        "lookups": { "prefix": "/lookups", "file": "backend/app/api/v1/endpoints/lookups.py", "routes": [
+          { "method": "GET", "path": "/api/v1/lookups", "handler": "list_lookups", "query": "categories (comma-separated)", "res": "dict grouped by category", "auth": "get_current_user ONLY (no permission gate — see known_issues)" }
+        ]},
+        "masters": { "prefix": "/masters", "file": "backend/app/api/v1/endpoints/masters.py", "master_types": ["departments","designations","leave_types","lookups"], "routes": [
+          { "method": "GET", "path": "/api/v1/masters", "handler": "list_masters", "auth": "require_permissions('settings:view')" },
+          { "method": "POST", "path": "/api/v1/masters/{master_type}", "handler": "create_master", "req": "MasterPayload", "auth": "require_permissions('settings:view')", "audit": "master.{type}.created" },
+          { "method": "PATCH", "path": "/api/v1/masters/{master_type}/{record_id}", "handler": "update_master", "auth": "require_permissions('settings:view')", "audit": "master.{type}.updated" },
+          { "method": "DELETE", "path": "/api/v1/masters/{master_type}/{record_id}", "handler": "delete_master", "auth": "require_permissions('settings:view')", "audit": "master.{type}.deleted", "note": "soft delete" }
+        ]},
+        "payroll": { "prefix": "/payroll", "file": "backend/app/api/v1/endpoints/payroll.py", "note": "salary component/structure master CRUD; gated by payroll:view but writes NO AuditLog", "routes": [
+          { "method": "GET", "path": "/api/v1/payroll/structures", "handler": "list_salary_structures", "auth": "require_permissions('payroll:view')" },
+          { "method": "POST", "path": "/api/v1/payroll/structures", "handler": "create_salary_structure", "status": 201, "auth": "require_permissions('payroll:view')" },
+          { "method": "GET", "path": "/api/v1/payroll/components", "handler": "list_salary_components", "auth": "require_permissions('payroll:view')" },
+          { "method": "POST", "path": "/api/v1/payroll/components", "handler": "create_salary_component", "status": 201, "auth": "require_permissions('payroll:view')", "errors": "409 duplicate code" },
+          { "method": "PUT", "path": "/api/v1/payroll/components/{component_id}", "handler": "update_salary_component", "auth": "require_permissions('payroll:view')", "errors": "409 if code change on component used by a structure" },
+          { "method": "DELETE", "path": "/api/v1/payroll/components/{component_id}", "handler": "delete_salary_component", "auth": "require_permissions('payroll:view')", "errors": "409 if used by structure", "note": "soft delete" }
+        ]},
+        "agents_and_agent_hosted_routers": {
+          "note": "These routers live INSIDE the agents package, not app/api/v1/endpoints. Detailed action lists are under backend.agents.",
+          "approvals": { "prefix": "/approvals", "file": "backend/app/agents/approval_agent/api.py", "key_routes": "GET /approvals/pending, GET /approvals/{id}, POST /approvals/create, POST /approvals/{id}/approve, /reject, /needs-changes, /resume-workflow" },
+          "agents_coordinator": { "prefix": "/agents", "file": "backend/app/agents/coordinator_agent/router.py", "key_routes": "POST /agents/command, GET /agents/workflows, GET /agents/workflows/{id}, GET /agents/workflows/{id}/events, GET /agents/registry", "auth": "require_permissions('agent_command:view')" },
+          "agent_command": { "prefix": "/agent-command", "file": "backend/app/agents/coordinator_agent/command_api.py", "key_routes": "POST /agent-command/send, GET /agent-command/workflows, GET /agent-command/workflows/{id}, GET /agent-command/workflows/{id}/events", "note": "frontend-friendly shape of the same CoordinatorRuntimeService" },
+          "attendance": { "prefix": "/attendance", "file": "backend/app/agents/attendance_agent/api.py", "key_routes": "GET /attendance/matrix, GET /attendance/dashboard, GET /attendance/employees/{id}/summary, POST /attendance/actions" },
+          "leave": { "prefix": "/leave", "file": "backend/app/agents/leave_agent/api.py", "key_routes": "GET /leave/employees/{id}/balances, /history, GET /leave/pending, /calendar, /policies, POST /leave/requests" },
+          "onboarding": { "prefix": "/onboarding", "file": "backend/app/agents/onboarding_agent/api.py", "key_routes": "onboarding start/inspect + GET /onboarding/state/{id} debug" },
+          "resume": { "prefix": "/resume", "file": "backend/app/agents/resume_parser_agent/api.py", "key_routes": "POST /resume/upload (multipart)" },
+          "salary_assignments": { "prefix": "/salary-assignments", "file": "backend/app/agents/salary_assignment_agent/api.py", "key_routes": "GET /salary-assignments/employees/{id}, /payroll-impact, POST /salary-assignments/command" }
+        }
+      },
+      "deps": {
+        "file": "backend/app/api/deps.py",
+        "get_db": "from app.db.session (Session generator)",
+        "oauth2_scheme": "OAuth2PasswordBearer(tokenUrl='/api/v1/auth/login')",
+        "get_current_user": "decode access JWT -> AuthService.get_user_by_id -> reject if inactive/invalid (401 'Could not validate credentials')",
+        "require_permissions(*codes)": "superuser bypass else set(codes) ⊆ user_permissions(user) else 403 'Insufficient permission'",
+        "require_roles(*names)": "superuser bypass else role-name intersection else 403 'Insufficient role' — DEFINED BUT UNUSED by app/api endpoints"
+      }
+    },
+    "services": {
+      "dir": "backend/app/services/",
+      "auth_service.py": {
+        "class_AuthService": "get_user_by_email/by_id (eager roles+permissions), authenticate (verify + update last_login_at), issue_tokens (access+refresh, persist hashed refresh), rotate_refresh_token (validate+revoke old+issue new), revoke_refresh_token",
+        "user_permissions(user)": "ALL codes if superuser else union of role permission codes",
+        "seed_auth_data(db)": "idempotent upsert of PERMISSIONS + ROLE_NAMES(+ROLE_PERMISSION_CODES) + admin superuser from settings",
+        "constants": {
+          "ROLE_NAMES": ["Super Admin","HR Admin","HR Executive","Manager","Employee"],
+          "PERMISSIONS(15 codes)": ["dashboard:view","employees:view","candidates:view","onboarding:view","attendance:view","leave:view","payroll:view","documents:view","assets:view","offboarding:view","approvals:view","approvals:manage","agent_command:view","audit_logs:view","settings:view"],
+          "ROLE_PERMISSION_CODES": { "Super Admin": "all 15", "HR Admin": "all 15", "HR Executive": ["dashboard:view","employees:view","candidates:view","onboarding:view","attendance:view","leave:view","documents:view","assets:view","approvals:view"], "Manager": ["dashboard:view","employees:view","attendance:view","leave:view","approvals:view"], "Employee": ["dashboard:view","documents:view","leave:view"] }
+        }
+      },
+      "lop_calculator.py": "LOPResult dataclass + calculate_lop(db, employee_id, month, year) — sums working/present/paid/unpaid/LOP days from AttendanceRecord + approved LeaveRequest; weekday fallback when no attendance",
+      "payroll_preparation_service.py": "prepare_employee_payroll_input(...) wraps calculate_lop; prepare_monthly_payroll_input maps over many employees"
+    },
+    "agents": {
+      "root": "backend/app/agents/",
+      "shared_infra": {
+        "dir": "backend/app/agents/shared/",
+        "base_agent.py": "BaseAgent(ABC): attrs name/description/supported_actions/approval_required_actions/requires_approval; async execute(state), abstract run(state), async invoke(action,payload,context)",
+        "agent_registry.py": "AgentRegistry singleton `agent_registry`: register/register_or_replace/get/list_agents/metadata()/async invoke — metadata() feeds GET /agents/registry",
+        "agent_events.py": "AgentEventType StrEnum (WORKFLOW_CREATED, AGENT_STARTED/COMPLETED, APPROVAL_REQUIRED, WORKFLOW_PAUSED/RESUMED, EMPLOYEE_*, LEAVE_*, ATTENDANCE_*, LOP_CALCULATED, ...) + AgentEvent model",
+        "workflow_state.py": "WorkflowStatus StrEnum (CREATED/RUNNING/WAITING_APPROVAL/RESUMED/COMPLETED/FAILED), WorkflowState, ExecutionHistoryItem, ApprovalWorkflowState",
+        "execution_tracker.py": "ExecutionTracker: start_run/step/event/finish — persists to AgentRun/AgentStep",
+        "interrupt_manager.py": "interrupt_manager — LangGraph pause_for_approval / resume semantics",
+        "natural_language.py": "intent classification layer (see intent_layer)",
+        "approval_guard.py": "ApprovalGuard + require_approval(...) -> ApprovalEngineService.create_approval",
+        "others": "agent_state.py, state_store.py (WorkflowStateStore), memory.py, memory_manager.py, message_types.py (AgentMessage/AgentMessageType), runtime_context.py (RuntimeContext), extraction.py, exceptions.py"
+      },
+      "intent_layer": {
+        "file": "backend/app/agents/shared/natural_language.py",
+        "singleton": "natural_language_extractor (NaturalLanguageExtractor)",
+        "extract(message)": "runs _rule_extract; if openai_intent_enabled + openai_api_key set also runs _openai_extract and merges. Rule wins if rule_intent != ai_intent AND rule_conf >= 0.9 AND no missing fields (source 'rules_fallback'); else AI wins if ai_conf >= rule_conf or rule intent 'unknown'. On exception -> rules.",
+        "_openai_extract": "langchain_openai.ChatOpenAI(model=settings.openai_intent_model, temperature=0).with_structured_output(IntentExtraction), large few-shot prompt, source 'openai'",
+        "IntentExtraction": "intent (IntentName literal ~37 intents), agent_name (AgentName literal), confidence 0-1, entities (IntentEntities: employee_name, manager_name, date_from/to, department, status, salary_amount, leave_type, payroll_month/year), missing_fields, clarification_question, canonical_command, source",
+        "thresholds": "INTENT_CONFIDENCE_THRESHOLD (settings.intent_confidence_threshold, default 0.55) gates clarify-vs-route"
+      },
+      "coordinator": {
+        "dir": "backend/app/agents/coordinator_agent/",
+        "service.py": "CoordinatorRuntimeService.submit_command is the REAL orchestrator (graph.py coordinator_graph is a thin skeleton). Flow described in architecture_overview.agent_command_flow.",
+        "routing_precedence": ["explicit 'revise salary' fallback", "extraction route (_route_from_extraction)", "keyword fallback route (_analyze_intent)"],
+        "CRITICAL_ACTION_KEYWORDS": "maps phrases ('create employee','update salary','approve leave','process payroll','onboard'...) -> (agent, action, approval_module, approval_action); these force an ApprovalRequest",
+        "register_placeholder_agents()": "runs at import; registers all domain agents + placeholders (offboarding_agent, notification_agent) into agent_registry",
+        "router.py": "GET/POST under /agents",
+        "command_api.py": "POST/GET under /agent-command (frontend-facing)"
+      },
+      "domain_agents": {
+        "employee_agent": { "dir": "backend/app/agents/employee_agent/", "service": "EmployeeAgent (service.py)", "supported_actions": ["search","list","show_profile","show_department","show_manager","create","update","delete","update_salary","change_manager","change_department","deactivate","confirm_update"], "approval_required": ["create","delete","update_salary","deactivate"], "confirmation_required": ["update","change_manager","change_department"], "tools": "tools.py (list/search/department_employees, get/find employee, update_employee_fields, create_employee_draft, soft_delete_employee, deactivate_employee, employee_profile)", "handlers": "handlers.py registers employee.create/update/update_salary/delete/change_manager/change_department/deactivate", "graph": "graph.py: intent_parsing -> operation_classification -> approval_check -> structured_response_generation" },
+        "attendance_agent": { "dir": "backend/app/agents/attendance_agent/", "supported_actions": ["show","record","regularize","matrix","calendar","detail","absent_today","payroll_summary","lop"], "approval_required": [], "graph": "factory returns None (logic in execute)" },
+        "leave_agent": { "dir": "backend/app/agents/leave_agent/", "service": "LeaveAgent", "supported_actions": ["create_type","apply","balance","history","pending","approve","reject","cancel","calendar","summary"], "approval_required": ["approve"], "tools": "tools/core.py", "handlers": "leave.approve, leave.approve.reject", "graph": "build_leave_graph returns None (logic in execute)" },
+        "payroll_agent": { "dir": "backend/app/agents/payroll_agent/", "service": "PayrollAgent", "supported_actions": ["inspect","create_component","update_component","delete_component","list"], "approval_required": [], "note": "salary-component master agent; tools.py has normalize_code used by payroll endpoints" },
+        "salary_structure_agent": { "dir": "backend/app/agents/salary_structure_agent/", "supported_actions": ["inspect","create_structure","update_structure","delete_structure","preview","list"], "approval_required": [] },
+        "salary_assignment_agent": { "dir": "backend/app/agents/salary_assignment_agent/", "service": "SalaryAssignmentAgent (agent.py)", "supported_actions": ["assign","revise","breakup","refresh_breakups","history","pending_approvals","inspect"], "approval_required": ["assign","revise","refresh_breakups"], "handlers": "salary_assignment.activate, salary_assignment.refresh_breakups", "service_impl": "services/salary_assignment_service.py + validator + parsers" },
+        "onboarding_agent": { "dir": "backend/app/agents/onboarding_agent/", "service": "OnboardingAgent", "supported_actions": ["start","resume_upload","inspect"], "handler": "onboarding.start -> execute_onboarding_start creates Employee+EmployeeAsset+Notification+AuditLog", "graph": "request -> multi_agent_coordination -> structured_response" },
+        "resume_parser_agent": { "dir": "backend/app/agents/resume_parser_agent/", "service": "ResumeParserAgent", "supported_actions": ["upload","parse"], "flow": "upload_and_parse validates+saves file, parser.py extracts text (pdfplumber/python-docx), creates Candidate+ResumeUpload", "graph": "extract_text -> parse_candidate -> generate_candidate_profile" },
+        "placeholders": { "offboarding_agent": "actions inspect/start; approval start", "notification_agent": "actions inspect/send_official_email; approval send_official_email — both PlaceholderSpecializedAgent registered by coordinator" }
+      }
+    },
+    "approvals": {
+      "dir": "backend/app/agents/approval_agent/",
+      "service.py_ApprovalEngineService": "create_approval, list_pending, get_approval, approve, reject (runs '{module}.{action}.reject' handler if present), needs_changes, resume_workflow (runs '{module}.{action}' handler from handler_registry, marks EXECUTED, _resume_agent_run patches originating AgentRun). Every transition writes AuditLog + ApprovalEvent.",
+      "handlers.py": "ApprovalHandlerRegistry singleton handler_registry + placeholder_handler. Pre-registered keys: employee.create/update/delete, payroll.process, payroll.generate_bank_sheet, leave.approve, offboarding.start. Domain agent handlers.py modules register the real executors (imported for side effects by coordinator service.py).",
+      "graph.py": "approval_graph: pause_for_human (interrupt_manager.pause_for_approval) -> execute_after_approval (runs handler if APPROVED) -> END",
+      "api.py": "REST endpoints serialize ApprovalRead with events + audit logs",
+      "note": "The empty app/approvals/ and app/audit/ packages are scaffolding — real approval logic is here, real audit is the AuditLog model written inline in endpoints."
+    },
+    "migrations": {
+      "dir": "backend/alembic/versions/",
+      "config": "alembic.ini has a placeholder sqlalchemy.url; alembic/env.py OVERRIDES it with settings.database_url and sets target_metadata=Base.metadata (from app.db.base).",
+      "current_head": "20260612_0024",
+      "chain": [
+        "20260528_0001 initial_foundation (<- None)",
+        "20260528_0002 auth_rbac",
+        "20260528_0003 hrms_core_models",
+        "20260528_0004 approval_engine (+ agent runs/audit)",
+        "20260528_0005 employee_agent_salary",
+        "20260528_0006 resume_uploads",
+        "20260529_0007 attendance_leave_foundation",
+        "20260601_0008 leave_types_basemodel_columns",
+        "20260601_0009 employee_nullable_identifiers",
+        "20260601_0010 employee_name_fields",
+        "20260601_0011 salary_components_master",
+        "20260601_0012 create_salary_structures (file 20260601_0011_create_salary_structures.py, revision id 20260601_0012)",
+        "20260602_0013 salary_assignments",
+        "20260605_0014 leave_management_agent (CREATES leave_approvals WITH tenant_id + indexes)",
+        "20260605_0015 leave_approvals_basemodel_indexes (NOW A NO-OP — see known_issues; originally re-added the same column/indexes and crashed upgrade)",
+        "20260605_0016 salary_schema_alignment",
+        "20260605_0017 leave_type_timestamp_defaults",
+        "20260605_0018 attendance_timestamp_defaults",
+        "20260611_0019 leave_entitlement_24_days",
+        "20260611_0020 recalculate_active_leave_balances (data migration)",
+        "20260612_0021 employee_employment_type",
+        "20260612_0022 dynamic_lookup_values (seeds lookups)",
+        "20260612_0023 expand_master_lookups",
+        "20260612_0024 department_active_status (HEAD)"
+      ],
+      "how_to_add": "cd backend; alembic revision -m 'desc' (or --autogenerate after ensuring the new model is imported via app/db/base.py); edit upgrade()/downgrade(); alembic upgrade head. Keep the linear single-head chain (down_revision = previous head). Prefer op.execute for data backfills."
+    }
+  },
+
+  "frontend": {
+    "root": "Frontend/",
+    "entrypoint": { "file": "Frontend/src/main.tsx", "tree": "StrictMode > ThemeProvider (@/components/ui-system) > QueryClientProvider(new QueryClient()) > RouterProvider(router). Imports @/styles.css." },
+    "conventions": {
+      "api_client": "Frontend/src/services/api.ts — custom fetch wrapper (apiGet/apiPost/apiPatch/apiPut/apiDelete). Reads accessToken from useAuthStore. On 401 calls refreshSession() and retries once. Throws Error(payload.detail ?? 'API request failed: <status>'). BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8001/api/v1'.",
+      "server_state": "TanStack Query; QueryClient created once in main.tsx; useQuery/useMutation declared inline in pages. Query keys: employees, employee-form-options, employee-detail, documents, leave-workspace, leave-policies, attendance-matrix, payroll-components, payroll-structures, masters, onboarding-workflows, health, lookups.",
+      "client_state": "Zustand — authStore (auth/session), appStore (sidebar UI).",
+      "rbac": "Route guard ProtectedRoute + Sidebar both key off the same *:view permission strings via useAuthStore.hasPermission.",
+      "imports": "Design system re-exported from @/components/ui-system (barrel index.ts); UI primitives in @/components/ui.",
+      "styling": "Tailwind with CSS-var HSL tokens defined in src/styles.css; darkMode 'class' toggled by ThemeProvider (localStorage 'hrms-theme')."
+    },
+    "routing": {
+      "file": "Frontend/src/routes/router.tsx (createBrowserRouter)",
+      "guard": "Frontend/src/components/auth/ProtectedRoute.tsx — calls useAuthStore.initialize() on mount; shows LoadingSkeleton while idle/loading; redirects to /login if no user, to /unauthorized if permission set and !hasPermission; else <Outlet/>",
+      "routes": [
+        { "path": "/", "element": "Navigate -> /dashboard", "permission": null },
+        { "path": "/login", "element": "LoginPage", "permission": "public" },
+        { "path": "/unauthorized", "element": "UnauthorizedPage", "permission": "auth only" },
+        { "path": "/dashboard", "element": "DashboardPage", "permission": "dashboard:view" },
+        { "path": "/employees", "element": "EmployeesPage", "permission": "employees:view" },
+        { "path": "/approvals", "element": "ApprovalsPage", "permission": "approvals:view" },
+        { "path": "/agent-command", "element": "AgentCommandPage", "permission": "agent_command:view" },
+        { "path": "/candidates", "element": "PlaceholderPage(Candidates)", "permission": "candidates:view" },
+        { "path": "/onboarding", "element": "OnboardingPage", "permission": "onboarding:view" },
+        { "path": "/attendance", "element": "AttendancePage", "permission": "attendance:view" },
+        { "path": "/leave", "element": "LeavePage", "permission": "leave:view" },
+        { "path": "/payroll", "element": "PayrollPage", "permission": "payroll:view" },
+        { "path": "/documents", "element": "DocumentsPage", "permission": "documents:view" },
+        { "path": "/assets", "element": "PlaceholderPage(Assets)", "permission": "assets:view" },
+        { "path": "/offboarding", "element": "PlaceholderPage(Offboarding)", "permission": "offboarding:view" },
+        { "path": "/audit-logs", "element": "PlaceholderPage(Audit Logs)", "permission": "audit_logs:view" },
+        { "path": "/masters", "element": "MastersPage", "permission": "settings:view" },
+        { "path": "/settings", "element": "PlaceholderPage(Settings)", "permission": "settings:view" }
+      ]
+    },
+    "pages": {
+      "dir": "Frontend/src/pages/",
+      "LoginPage.tsx": "split-screen sign-in; useAuthStore.login; redirects to state.from or /dashboard",
+      "DashboardPage.tsx": "static StatCards + placeholders (no live queries yet)",
+      "EmployeesPage.tsx": "directory DataTable; useQuery(['employees'], getEmployees, refetch 15s); create wizard, profile/edit drawers, delete confirm (deleteEmployee)",
+      "OnboardingPage.tsx": "useQuery(['onboarding-workflows'], getWorkflows) filtered to onboarding agent; read-only",
+      "AttendancePage.tsx": "matrix/calendar; getAttendanceMatrix + getAttendanceDashboard; cell edit updateAttendanceCell",
+      "LeavePage.tsx": "getLeaveWorkspace; apply-leave form applyLeave; invalidates leave-workspace + attendance-matrix",
+      "PayrollPage.tsx": "salary component/structure config; getSalaryComponents/getSalaryStructures + getLookups([salary_component_type,salary_calculation_type]); CRUD components",
+      "ApprovalsPage.tsx": "human-in-the-loop queue; getPendingApprovals/getApproval + approve/reject/needsChanges/resumeApprovalWorkflow",
+      "DocumentsPage.tsx": "document register; getDocuments; add via createDocument + getLookups([document_type,document_status])",
+      "MastersPage.tsx": "master data admin; getMasters + create/update/deleteMaster",
+      "AgentCommandPage.tsx": "flagship conversational center (~1112 lines); submitAgentCommand, polls getWorkflows/getWorkflow, resume upload, renders BusinessResponseCards by StructuredResponse type",
+      "PlaceholderPage.tsx": "generic shell (title prop) for Candidates/Assets/Offboarding/Audit Logs/Settings",
+      "UnauthorizedPage.tsx": "RBAC denial screen"
+    },
+    "stores": {
+      "dir": "Frontend/src/stores/",
+      "authStore.ts": { "hook": "useAuthStore", "state": "accessToken(memory), refreshToken(sessionStorage key 'agentic_hrms_refresh_token'), user(AuthUser), status(idle|loading|authenticated|unauthenticated)", "actions": "login(email,pw)->loginRequest+meRequest; logout()->logoutRequest; initialize()->silent refresh on load; refreshSession()->new access token or null; hasPermission(code)->is_superuser||permissions.includes" },
+      "appStore.ts": { "hook": "useAppStore", "state": "sidebarOpen, sidebarCollapsed + setters" }
+    },
+    "services": {
+      "dir": "Frontend/src/services/",
+      "api.ts": "core fetch client (above)",
+      "auth.ts": "loginRequest POST /auth/login (x-www-form-urlencoded username/password), refreshRequest POST /auth/refresh, logoutRequest POST /auth/logout, meRequest GET /auth/me (uses its own fetch + API_BASE_URL)",
+      "employees.ts": "getEmployees GET /employees?page_size=50; getEmployeeFormOptions GET /employees/form-options; createEmployee POST /employees; getEmployee GET /employees/{id}; updateEmployee PATCH /employees/{id}; deleteEmployee DELETE /employees/{id}",
+      "leave.ts": "GET /leave/employees/{id}/balances,/history; GET /leave/pending,/calendar,/policies; POST /leave/requests; getLeaveWorkspace() aggregates",
+      "attendance.ts": "getAttendanceMatrix GET /attendance/matrix; getAttendanceDashboard GET /attendance/dashboard; getEmployeeAttendanceSummary GET /attendance/employees/{id}/summary; updateAttendanceCell POST /attendance/actions",
+      "payroll.ts": "GET/POST /payroll/components; PUT/DELETE /payroll/components/{id}; GET/POST /payroll/structures",
+      "salaryAssignments.ts": "GET /salary-assignments/employees/{id}, /payroll-impact; POST /salary-assignments/command",
+      "approvals.ts": "GET /approvals/pending, /approvals/{id}; POST /approvals/{id}/approve|reject|needs-changes|resume-workflow",
+      "agents.ts": "submitAgentCommand POST /agent-command/send; getWorkflows GET /agent-command/workflows; getWorkflow GET /agent-command/workflows/{id}; getOnboardingStateDebug GET /onboarding/state/{id}; getAgentRegistry GET /agents/registry; uploadOnboardingResume POST /resume/upload (XMLHttpRequest for progress)",
+      "documents.ts": "getDocuments GET /documents; createDocument POST /documents",
+      "masters.ts": "getMasters GET /masters; createMaster POST /masters/{type}; updateMaster PATCH /masters/{type}/{id}; deleteMaster DELETE /masters/{type}/{id}",
+      "lookups.ts": "getLookups(categories?) GET /lookups?categories=a,b"
+    },
+    "components": {
+      "dir": "Frontend/src/components/",
+      "ui/": "shadcn-style primitives: badge, button, card (Card/CardContent/CardHeader/CardTitle), input",
+      "ui-system/": "design system + layout + feature cards, barrel index.ts. Layout: AppLayout (minimal prop for login), Sidebar (+ sidebarItems nav, permission-filtered), SidebarMenu, Header, Breadcrumbs, PageContainer, PageHeader, SectionCard. Data/UI: DataTable, StatCard, StatusBadge, Badge, FilterBar, SearchBar, Timeline, ActivityFeed, EmptyState, ErrorState, LoadingSkeleton, ToastNotification, ConfirmDialog, DrawerPanel, SheetPanel. Theming: theme-provider (ThemeProvider/useTheme). Agent/chat: ChatMessage, CommandInput, AgentStepCard, ApprovalCard.",
+      "BusinessResponseCards.tsx": "~1164-line feature-card library (EmployeePreviewCard, CandidateCard, PayrollSummaryCard, LeaveApprovalCard, OnboardingProgressCard, ApprovalDiffCard, AttendanceTable, EmployeeProfileDrawer, ...) exported via ui-system barrel; rendered by AgentCommandPage keyed off StructuredResponse type",
+      "auth/ProtectedRoute.tsx": "route guard (above)",
+      "employees/": "EmployeeCreateWizard (3-step), EmployeeEditDrawer (getEmployee + form options + updateEmployee)",
+      "modules/": "empty (.gitkeep) — future feature modules"
+    },
+    "types": { "dir": "Frontend/src/types/", "auth.ts": "AuthUser (id,email,full_name,is_active,is_superuser,roles[],permissions[]), TokenResponse (access_token,refresh_token,token_type)", "index.ts": "type UUID = string", "note": "most domain types are colocated in their service files" },
+    "config": {
+      "vite.config.ts": "plugin-react; alias @ -> ./src; dev server.port 5173; build manualChunks react/motion/query",
+      "tailwind.config.ts": "darkMode ['class']; content index.html + src/**/*.{ts,tsx}; HSL CSS-var tokens; custom borderRadius + boxShadow.soft",
+      "tsconfig": "project refs tsconfig.app.json (strict, ES2022, moduleResolution Bundler, jsx react-jsx, @/* -> src/*) + tsconfig.node.json",
+      "env": "only VITE_API_BASE_URL"
+    }
+  },
+
+  "cross_cutting": {
+    "permissions_catalog": {
+      "note": "15 codes defined in backend/app/services/auth_service.py PERMISSIONS. Each backend route gate and frontend route/sidebar use the SAME code. Change both sides together.",
+      "codes": {
+        "dashboard:view": "FE /dashboard",
+        "employees:view": "BE /employees* ; FE /employees",
+        "candidates:view": "FE /candidates (placeholder)",
+        "onboarding:view": "FE /onboarding (BE onboarding routes are agent-hosted)",
+        "attendance:view": "FE /attendance (BE attendance routes agent-hosted)",
+        "leave:view": "FE /leave (BE leave routes agent-hosted)",
+        "payroll:view": "BE /payroll* ; FE /payroll",
+        "documents:view": "BE /documents* ; FE /documents",
+        "assets:view": "FE /assets (placeholder)",
+        "offboarding:view": "FE /offboarding (placeholder)",
+        "approvals:view": "FE /approvals",
+        "approvals:manage": "granted to Super Admin/HR Admin (approval actions)",
+        "agent_command:view": "BE /agents* ; FE /agent-command",
+        "audit_logs:view": "FE /audit-logs (placeholder)",
+        "settings:view": "BE /masters* ; FE /masters + /settings"
+      }
+    },
+    "auth_end_to_end": "See architecture_overview.auth_flow. Backend: app/core/security.py + services/auth_service.py + api/deps.py + endpoints/auth.py. Frontend: services/auth.ts + services/api.ts + stores/authStore.ts + components/auth/ProtectedRoute.tsx.",
+    "known_issues_and_gotchas": [
+      "MIGRATION FIXED: 20260605_0015 was crashing `alembic upgrade head` by re-adding leave_approvals.tenant_id + indexes already created by 0014. It is now a no-op. Do not re-add DDL there.",
+      "SEED SCRIPT: run `python -m scripts.seed_auth`, not `python scripts/seed_auth.py` (the latter fails ModuleNotFoundError: No module named 'app').",
+      "FRONTEND FALLBACK PORT: services/api.ts and services/auth.ts default to :8001 when VITE_API_BASE_URL is unset, but the documented backend runs on :8000. Always set Frontend/.env.",
+      "AUTH GAP: GET /api/v1/lookups is gated by authentication only (get_current_user), NOT by a permission — any logged-in user can read all lookups.",
+      "AUDIT GAP: /api/v1/payroll/* endpoints mutate data but write NO AuditLog (unlike employees/documents/masters).",
+      "require_roles() exists in deps.py but no app/api endpoint uses it (only require_permissions + get_current_user).",
+      "LangGraph graphs for leave_agent and attendance_agent are placeholders (factory returns None); real logic runs in each *Agent.execute(). coordinator_graph is also a skeleton — CoordinatorRuntimeService.submit_command is the live orchestrator.",
+      "WorkflowState has no dedicated table — it is serialized into agent_runs.metadata_json; agent_runs.correlation_id IS the public workflow_id.",
+      "Two migration files share the 20260601_0011 filename prefix but have distinct revision ids (…0011 and …0012).",
+      "config.access_token_expire_minutes has no env alias, so ACCESS_TOKEN_EXPIRE_MINUTES in .env is not actually read (stays 60)."
+    ]
+  },
+
+  "playbooks": {
+    "add_backend_endpoint": [
+      "1. Create/extend a handler module in backend/app/api/v1/endpoints/<feature>.py with `router = APIRouter()`; define request/response Pydantic models locally or in app/agents/<x>/schemas.py.",
+      "2. Gate mutations with dependencies=[Depends(require_permissions('<code>'))] from app/api/deps.py; capture the actor with current_user: User = Depends(get_current_user) when you need to write AuditLog.",
+      "3. Use db: Session = Depends(get_db). Filter reads with deleted_at IS NULL; soft-delete by setting deleted_at.",
+      "4. Register the router in backend/app/api/v1/router.py: api_router.include_router(<feature>.router, prefix='/<feature>', tags=['<feature>']).",
+      "5. If it mutates business data, write AuditLog(entity_type,entity_id,action,old_value,new_value,performed_by) like employees.py does.",
+      "6. Update this doc: backend.api.groups.<feature> and cross_cutting.permissions_catalog.",
+      "7. Wire the frontend (see wire_frontend_to_new_endpoint)."
+    ],
+    "add_model_and_migration": [
+      "1. Add the SQLAlchemy class in the right file under backend/app/models/<domain>/models.py, inheriting BaseModel (gives id/tenant_id/created_at/updated_at/deleted_at).",
+      "2. Ensure it is imported by backend/app/db/base.py (add to imports/__all__) so Alembic autogenerate + create_all see it.",
+      "3. cd backend; alembic revision -m '<desc>' (or --autogenerate). Set down_revision to the current head (20260612_0024 or later). Keep a single linear head.",
+      "4. Fill upgrade()/downgrade(); use op.execute for data backfills; do NOT re-create columns another migration already made (see the 0014/0015 gotcha).",
+      "5. alembic upgrade head; verify with \\dt / \\d <table>.",
+      "6. Add Pydantic schemas + endpoint + frontend service as needed.",
+      "7. Update this doc: backend.models.<domain>, backend.migrations.chain, backend.migrations.current_head."
+    ],
+    "add_new_agent": [
+      "1. Create backend/app/agents/<name>_agent/ with service.py subclassing BaseAgent (set name, supported_actions, approval_required_actions).",
+      "2. If it needs an HTTP surface, add api.py with `router = APIRouter()` and register it in app/api/v1/router.py.",
+      "3. Register the agent into agent_registry — add it to register_placeholder_agents() in coordinator_agent/service.py (imported at startup).",
+      "4. For approval-gated actions, register executors in <name>_agent/handlers.py keyed '{module}.{action}' into handler_registry, and import that module for side effects in coordinator service.py; add keyword mappings to CRITICAL_ACTION_KEYWORDS if the coordinator should route to it.",
+      "5. Add intent names/routing in shared/natural_language.py (IntentName/AgentName) and coordinator routing if it should be reachable via /agent-command.",
+      "6. Update this doc: backend.agents.domain_agents.<name>_agent and backend.api if a router was added."
+    ],
+    "add_agent_action": [
+      "1. Add the action string to the agent's supported_actions and implement it in the agent's run/execute dispatch.",
+      "2. If mutating/critical: add to approval_required_actions and register a '{module}.{action}' handler in handlers.py.",
+      "3. Add/extend intent mapping in natural_language.py so the coordinator can route to it.",
+      "4. Update this doc: backend.agents.domain_agents.<agent>."
+    ],
+    "add_frontend_page": [
+      "1. Create Frontend/src/pages/<X>Page.tsx; use ui-system components (AppLayout is applied at layout level).",
+      "2. Add a route in Frontend/src/routes/router.tsx wrapped in <ProtectedRoute permission='<code>' />.",
+      "3. Add the nav entry to sidebarItems in components/ui-system/Sidebar.tsx (permission-filtered).",
+      "4. Fetch data with useQuery/useMutation using a service from services/ (add one if missing).",
+      "5. Update this doc: frontend.routing.routes, frontend.pages, and cross_cutting.permissions_catalog."
+    ],
+    "wire_frontend_to_new_endpoint": [
+      "1. Add a function in Frontend/src/services/<feature>.ts using apiGet/apiPost/apiPatch/apiPut/apiDelete from services/api.ts (path is relative to /api/v1; the client prepends VITE_API_BASE_URL).",
+      "2. Define the TS response type in the same service file (that is the repo convention).",
+      "3. Consume via useQuery/useMutation in the page; pick a stable query key and invalidate related keys after mutations.",
+      "4. Update this doc: frontend.services.<feature>."
+    ],
+    "debug_backend_500": [
+      "Reproduce against http://127.0.0.1:8000/docs or curl; read the uvicorn traceback.",
+      "Common causes here: DB column/enum mismatch vs a model (check backend.models vs actual table with \\d <table>); missing migration (alembic current vs head 20260612_0024); a service raising (services/*.py); an agent handler throwing during resume_workflow.",
+      "Trace: endpoint (backend.api.groups.*) -> service/agent tool -> model. Use the file paths in this doc to open the exact function."
+    ],
+    "debug_auth_401": [
+      "401 'Could not validate credentials' comes from api/deps.get_current_user: token missing/expired/type!='access', or user inactive/not found.",
+      "Frontend auto-retries once via refreshSession() (services/api.ts). If refresh also fails the user is logged out. Check refresh_tokens row (revoked_at/expires_at) and that JWT_SECRET_KEY matches the one that signed the token.",
+      "403 'Insufficient permission' = require_permissions gate; verify the user's roles/permissions (cross_cutting.permissions_catalog) or use the superuser admin."
+    ],
+    "debug_migration_failure": [
+      "Read the alembic traceback. DuplicateColumn/DuplicateTable => a later migration re-does DDL an earlier one already applied (the 0014/0015 pattern) — make the later one a no-op or guard it.",
+      "'Can't locate revision' => broken chain (down_revision points at a missing id) — fix the revision links; keep one linear head.",
+      "Wrong DB => remember env.py uses settings.database_url (from backend/.env), not alembic.ini.",
+      "Recover: fix the offending version file, then `alembic upgrade head` (it resumes from alembic_version)."
+    ],
+    "trace_an_agent_command_end_to_end": [
+      "FE AgentCommandPage -> submitAgentCommand (services/agents.ts) -> POST /api/v1/agent-command/send.",
+      "BE coordinator_agent/command_api.py -> CoordinatorRuntimeService.submit_command (service.py).",
+      "Intent: shared/natural_language.py natural_language_extractor.extract -> IntentExtraction.",
+      "Route: _route_from_extraction / _analyze_intent -> _invoke_domain_agent -> <agent>.execute.",
+      "Approval (if critical): ApprovalEngineService.create_approval -> ApprovalRequest; workflow WAITING_APPROVAL.",
+      "State: persisted on agent_runs.metadata_json keyed by correlation_id; poll GET /agent-command/workflows/{id} + /events.",
+      "Resume: POST /approvals/{id}/approve then /resume-workflow -> handler_registry['{module}.{action}'] -> _resume_agent_run patches the AgentRun to COMPLETED."
+    ]
+  },
+
+  "update_protocol": {
+    "principle": "This doc must be edited in the SAME change as the code it describes, so it never drifts.",
+    "when_you_change_code_update_these_json_paths": {
+      "backend/app/models/**": ["backend.models.<domain>", "if a table added: backend.db.base_registry note", "backend.migrations.chain + current_head"],
+      "backend/alembic/versions/**": ["backend.migrations.chain", "backend.migrations.current_head"],
+      "backend/app/api/v1/endpoints/** or router.py": ["backend.api.groups.<group>", "cross_cutting.permissions_catalog"],
+      "backend/app/agents/**": ["backend.agents.* (supported_actions, approval_required, handlers, graph status)", "backend.api.groups.agents_and_agent_hosted_routers if a router changed"],
+      "backend/app/services/auth_service.py PERMISSIONS/ROLES": ["backend.services.auth_service.constants", "cross_cutting.permissions_catalog"],
+      "backend/app/core/config.py": ["backend.core.config.fields", "runbook.env_vars"],
+      "Frontend/src/routes/router.tsx": ["frontend.routing.routes"],
+      "Frontend/src/pages/**": ["frontend.pages"],
+      "Frontend/src/services/**": ["frontend.services"],
+      "Frontend/src/stores/**": ["frontend.stores"]
+    },
+    "always_also": ["Bump $meta.last_synced_git_commit to the new commit hash", "Add any newly discovered footgun to cross_cutting.known_issues_and_gotchas"],
+    "paste_this_instruction_to_your_ai_tool": "You are editing the Agentic HRMS repo. docs/architecture.json is the authoritative map of the code. (1) Before writing code, read the relevant section and the matching entry under `playbooks`; only touch the files it names and copy the shown pattern. (2) After writing code, update docs/architecture.json per its `update_protocol.when_you_change_code_update_these_json_paths`, and bump $meta.last_synced_git_commit. (3) Never invent paths/tables/routes/permissions not present in this file — if something is missing, say so. Cite file:line in your explanation."
+  }
+}
