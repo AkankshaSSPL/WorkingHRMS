@@ -1,10 +1,8 @@
 from datetime import date
 from uuid import UUID
-
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-
 from app.agents.attendance_agent.tools import (
     attendance_calendar,
     attendance_dashboard,
@@ -14,12 +12,12 @@ from app.agents.attendance_agent.tools import (
     find_employee_or_raise,
     record_attendance,
 )
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_permissions
 from app.db.session import get_db
 from app.models.auth import User
 from app.models.employee import Employee
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_permissions("attendance:view"))])
 
 
 class AttendanceActionRequest(BaseModel):
@@ -56,7 +54,16 @@ def dashboard(db: Session = Depends(get_db), current_user: User = Depends(get_cu
 
 @router.get("/detail")
 def detail(employee_id: str, attendance_date: date, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return attendance_detail(db, employee_id=employee_id, attendance_date=attendance_date)
+    try:
+        return attendance_detail(db, employee_id=employee_id, attendance_date=attendance_date)
+    except ValueError as exc:
+        # Previously uncaught: a malformed employee_id (not a valid UUID) raised
+        # ValueError straight out of UUID(...) and surfaced as an unhandled 500.
+        raise HTTPException(status_code=400, detail="Invalid employee_id.") from exc
+    except LookupError as exc:
+        # Previously uncaught: an employee_id that doesn't match any employee
+        # raised LookupError and surfaced as an unhandled 500 instead of a 404.
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/employees/{employee_id}/summary")
@@ -80,15 +87,28 @@ def action(payload: AttendanceActionRequest, db: Session = Depends(get_db), curr
         employee = db.get(Employee, UUID(str(payload.employee_id)))
     except ValueError:
         employee = None
-    employee = employee or find_employee_or_raise(db, payload.employee_id)
-    record = record_attendance(
-        db,
-        employee=employee,
-        attendance_date=payload.attendance_date,
-        status=payload.status,
-        remarks=payload.remarks or "Updated from Attendance Matrix",
-        actor_id=current_user.id,
-        action="attendance.corrected",
-    )
+    try:
+        employee = employee or find_employee_or_raise(db, payload.employee_id)
+    except LookupError as exc:
+        # Previously uncaught: an employee_id that isn't a valid UUID AND doesn't
+        # fuzzy-match any employee by name surfaced as an unhandled 500 instead of
+        # a clean 404.
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    try:
+        record = record_attendance(
+            db,
+            employee=employee,
+            attendance_date=payload.attendance_date,
+            status=payload.status,
+            remarks=payload.remarks or "Updated from Attendance Matrix",
+            actor_id=current_user.id,
+            action="attendance.corrected",
+        )
+    except ValueError as exc:
+        # Previously uncaught: an unrecognized status string raised ValueError from
+        # AttendanceStatus(status.upper()) inside record_attendance() and surfaced
+        # as an unhandled 500 instead of a clean 400 naming the bad value.
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Invalid attendance status: {payload.status!r}") from exc
     db.commit()
     return attendance_detail(db, employee_id=str(record.employee_id), attendance_date=payload.attendance_date)

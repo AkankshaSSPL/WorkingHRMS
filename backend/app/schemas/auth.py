@@ -40,6 +40,7 @@ class CurrentUserResponse(BaseModel):
     full_name: str
     is_active: bool
     is_superuser: bool
+    employee_id: UUID | None = None
     roles: list[str]
     permissions: list[str]
 
@@ -47,4 +48,3 @@ class CurrentUserResponse(BaseModel):
 class RefreshTokenRecord(BaseModel):
     token_hash: str
     expires_at: datetime
-

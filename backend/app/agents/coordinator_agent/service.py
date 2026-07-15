@@ -30,6 +30,7 @@ from app.agents.shared.state_store import WorkflowStateStore
 from app.agents.shared.workflow_state import ExecutionHistoryItem, WorkflowState, WorkflowStatus
 from app.core.config import settings
 from app.models.agents import AgentRun, AgentRunStatus, AgentStepStatus
+from app.models.auth import User
 
 
 CRITICAL_ACTION_KEYWORDS = {
@@ -141,10 +142,22 @@ ACTION_SUMMARIES = {
     "balance": "View leave balance",
     "attendance": "Review attendance summary",
     "lop": "Calculate LOP inputs",
-    "start": "Review offboarding start request",
-    "send_official_email": "Review official email request",
     "start": "Start onboarding workflow",
+    "send_official_email": "Review official email request",
 }
+
+
+def _operation_summary(route: dict[str, Any], default: str | None = None) -> str:
+    # onboarding_agent and offboarding_agent both use the literal action name "start",
+    # but ACTION_SUMMARIES is keyed by action name alone, not (agent_name, action). A
+    # dict literal can only hold one "start" key, so a plain ACTION_SUMMARIES.get(...)
+    # always resolved to whichever definition was written last ("Start onboarding
+    # workflow"), silently mislabeling offboarding-start approvals in the Approval
+    # Inbox. Special-cased here instead of restructuring every ACTION_SUMMARIES call
+    # site to take an agent-aware key.
+    if route["agent_name"] == "offboarding_agent" and route["action"] == "start":
+        return "Review offboarding start request"
+    return ACTION_SUMMARIES.get(route["action"], default if default is not None else route["matched_intent"])
 
 
 class CoordinatorRuntimeService:
@@ -325,7 +338,7 @@ class CoordinatorRuntimeService:
                 result = {
                     "message": f"{AGENT_DISPLAY_NAMES.get(route['agent_name'], route['agent_name'])} paused for approval.",
                     "approval_request_id": str(approval.id),
-                    "operation_summary": ACTION_SUMMARIES.get(route["action"], route["matched_intent"]),
+                    "operation_summary": _operation_summary(route),
                 }
             else:
                 result = self._invoke_placeholder_agent(route, command, context, run)
@@ -396,7 +409,7 @@ class CoordinatorRuntimeService:
             self.tracker.finish(run, AgentRunStatus.FAILED, result)
             return run
 
-    def get_workflow(self, workflow_id: str) -> AgentRun:
+    def get_workflow(self, workflow_id: str, user: User | None = None) -> AgentRun:
         run = self.db.scalar(
             select(AgentRun)
             .where(AgentRun.correlation_id == workflow_id)
@@ -405,21 +418,31 @@ class CoordinatorRuntimeService:
         )
         if not run:
             raise LookupError("Workflow not found")
+        # Previously unscoped: any authenticated caller with agent_command:view could
+        # fetch ANY user's workflow by id, including other people's salary-change
+        # commands, onboarding candidate data, and approval payloads. Raising the same
+        # LookupError (-> 404) for "not found" and "not yours" avoids leaking that a
+        # given workflow_id exists at all to someone who isn't allowed to see it.
+        if user is not None and not user.is_superuser and run.requested_by != user.id:
+            raise LookupError("Workflow not found")
         return run
 
-    def list_workflows(self, limit: int = 20) -> list[AgentRun]:
+    def list_workflows(self, user: User | None = None, limit: int = 20) -> list[AgentRun]:
+        statement = select(AgentRun).where(AgentRun.agent_name == "coordinator_agent")
+        # Previously unscoped: returned the most recent workflows system-wide to
+        # anyone with agent_command:view, so every user's Agent Command Center showed
+        # every other user's conversation history. Superusers keep the unscoped view
+        # (matches the bypass convention used by require_self_employee_or_permission).
+        if user is not None and not user.is_superuser:
+            statement = statement.where(AgentRun.requested_by == user.id)
         return list(
             self.db.scalars(
-                select(AgentRun)
-                .where(AgentRun.agent_name == "coordinator_agent")
-                .options(selectinload(AgentRun.steps))
-                .order_by(AgentRun.created_at.desc())
-                .limit(limit)
+                statement.options(selectinload(AgentRun.steps)).order_by(AgentRun.created_at.desc()).limit(limit)
             )
         )
 
-    def list_events(self, workflow_id: str) -> list[AgentEvent]:
-        run = self.get_workflow(workflow_id)
+    def list_events(self, workflow_id: str, user: User | None = None) -> list[AgentEvent]:
+        run = self.get_workflow(workflow_id, user=user)
         return [AgentEvent.model_validate(event) for event in (run.metadata_json or {}).get("events", [])]
 
     def _route_from_extraction(self, extraction: IntentExtraction) -> dict[str, Any] | None:
@@ -649,7 +672,7 @@ class CoordinatorRuntimeService:
         }
 
     def _invoke_placeholder_agent(self, route: dict[str, Any], command: str, context: RuntimeContext, run: AgentRun) -> dict[str, Any]:
-        operation_summary = ACTION_SUMMARIES.get(route["action"], "Coordinate workforce operation")
+        operation_summary = _operation_summary(route, default="Coordinate workforce operation")
         agent_display_name = AGENT_DISPLAY_NAMES.get(route["agent_name"], route["agent_name"])
         result = {
             "agent": route["agent_name"],
@@ -729,7 +752,7 @@ class CoordinatorRuntimeService:
             "agent": route["agent_name"],
             "agent_display_name": AGENT_DISPLAY_NAMES.get(route["agent_name"], route["agent_name"]),
             "action": route["action"],
-            "operation_summary": ACTION_SUMMARIES.get(route["action"], route["matched_intent"]),
+            "operation_summary": _operation_summary(route),
             "execution_status": execution_status,
             "workflow_status": workflow_status,
             "execution_summary": summary,

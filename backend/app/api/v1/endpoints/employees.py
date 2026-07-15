@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.agents.employee_agent.tools import create_employee_draft, employee_profile, employee_to_summary, get_employee_by_id, list_employees, search_employees, soft_delete_employee, update_employee_fields
@@ -168,6 +169,16 @@ def update_employee(
     except (LookupError, ValueError) as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        # Previously uncaught: a duplicate official_email or employee_code
+        # raises IntegrityError from the DB unique constraint, which surfaced
+        # as an unhandled 500 with a raw SQL traceback instead of a clean,
+        # actionable error.
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This update conflicts with an existing employee record (duplicate email or employee code).",
+        ) from exc
 
 
 @router.delete("/{employee_id}", dependencies=[Depends(require_permissions("employees:view"))])

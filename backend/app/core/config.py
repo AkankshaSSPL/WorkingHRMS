@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,7 +19,9 @@ class Settings(BaseSettings):
 
     jwt_secret_key: str = Field(default="change-me-before-production", validation_alias="JWT_SECRET_KEY")
     jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 60
+    # Was missing its env alias, so ACCESS_TOKEN_EXPIRE_MINUTES in .env was
+    # silently ignored and this always stayed at 60 regardless of config.
+    access_token_expire_minutes: int = Field(default=60, validation_alias="ACCESS_TOKEN_EXPIRE_MINUTES")
     refresh_token_expire_days: int = Field(default=7, validation_alias="REFRESH_TOKEN_EXPIRE_DAYS")
 
     admin_email: str = Field(default="admin@example.com", validation_alias="ADMIN_EMAIL")
@@ -30,9 +32,30 @@ class Settings(BaseSettings):
     openai_intent_model: str = Field(default="gpt-4o-mini", validation_alias="OPENAI_INTENT_MODEL")
     openai_intent_enabled: bool = Field(default=True, validation_alias="OPENAI_INTENT_ENABLED")
     intent_confidence_threshold: float = Field(default=0.55, validation_alias="INTENT_CONFIDENCE_THRESHOLD")
-    cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+    # Was hardcoded with no env alias, so every deployment shared the same
+    # localhost-only origin list regardless of environment. Now reads from
+    # CORS_ORIGINS as a comma-separated string, e.g.:
+    #   CORS_ORIGINS=https://app.example.com,https://admin.example.com
+    # Falls back to the local dev origins when unset, so local dev workflow
+    # is unchanged.
+    cors_origins: list[str] = Field(
+        default=["http://localhost:5173", "http://127.0.0.1:5173"],
+        validation_alias="CORS_ORIGINS",
+    )
+
     resume_storage_dir: str = Field(default="storage/resumes", validation_alias="RESUME_STORAGE_DIR")
     max_resume_upload_mb: int = Field(default=10, validation_alias="MAX_RESUME_UPLOAD_MB")
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _split_cors_origins(cls, value: object) -> object:
+        """Allow CORS_ORIGINS to be set as a plain comma-separated string in
+        .env, rather than requiring JSON-list syntax. Leaves list/None values
+        (e.g. the Python-side default) untouched."""
+        if isinstance(value, str):
+            return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
 
 
 @lru_cache

@@ -19,6 +19,7 @@ def serialize_user(user: User) -> CurrentUserResponse:
         full_name=user.full_name,
         is_active=user.is_active,
         is_superuser=user.is_superuser,
+        employee_id=user.employee_profile.id if user.employee_profile else None,
         roles=sorted(role.name for role in user.roles),
         permissions=permissions,
     )
@@ -55,4 +56,3 @@ def logout(payload: LogoutRequest, db: Session = Depends(get_db)) -> dict[str, s
 @router.get("/me", response_model=CurrentUserResponse)
 def me(current_user: User = Depends(get_current_user)) -> CurrentUserResponse:
     return serialize_user(current_user)
-

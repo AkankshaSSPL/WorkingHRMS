@@ -210,9 +210,24 @@ def update_employee_fields(db: Session, employee_id: UUID, fields: dict[str, Any
         "uan_number",
     }
     old_value = employee_profile(employee)
+
+    # Same normalization as create_employee_draft, plus keep the linked
+    # login account (User.email) in sync. Without the sync, changing an
+    # employee's official email here silently leaves them logging in with
+    # the old email — the directory and the credential drift apart.
+    if fields.get("official_email"):
+        fields["official_email"] = fields["official_email"].strip().lower()
+
     for key, value in fields.items():
         if key in allowed:
             setattr(employee, key, value)
+
+    if "official_email" in fields and employee.user_id:
+        linked_user = db.get(User, employee.user_id)
+        if linked_user and linked_user.email != fields["official_email"]:
+            linked_user.email = fields["official_email"]
+            db.add(linked_user)
+
     db.add(employee)
     db.flush()
     db.refresh(employee)
@@ -223,7 +238,13 @@ def create_employee_draft(db: Session, payload: dict[str, Any]) -> tuple[Employe
     user = None
     first_name = (payload.get("first_name") or "").strip()
     last_name = (payload.get("last_name") or "").strip()
-    official_email = payload.get("official_email")
+    # Normalize to lowercase, matching AuthService.get_user_by_email, which
+    # always lowercases the lookup. Without this, a mixed-case email here
+    # creates a User row whose stored email never matches a real login
+    # attempt (e.g. "John.Doe@x.com" stored vs "john.doe@x.com" looked up),
+    # silently locking that employee out of the app entirely.
+    official_email_raw = payload.get("official_email")
+    official_email = official_email_raw.strip().lower() if official_email_raw else None
     joining_date = _parse_date(payload.get("joining_date"))
     if not joining_date:
         raise ValueError("joining_date is required and cannot be inferred")

@@ -58,4 +58,3 @@ class AgentStep(BaseModel):
     output_json: Mapped[dict | None] = mapped_column(JSONB)
 
     agent_run: Mapped[AgentRun] = relationship(back_populates="steps")
-

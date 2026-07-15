@@ -124,8 +124,13 @@ def send_command(
 
 
 @router.get("/workflows", response_model=list[AgentCommandWorkflowResponse], dependencies=[Depends(require_permissions("agent_command:view"))])
-def recent_workflows(service: CoordinatorRuntimeService = Depends(get_service)) -> list[AgentCommandWorkflowResponse]:
-    return [adapt_workflow(serialize_workflow(run)) for run in service.list_workflows()]
+def recent_workflows(
+    current_user: User = Depends(get_current_user),
+    service: CoordinatorRuntimeService = Depends(get_service),
+) -> list[AgentCommandWorkflowResponse]:
+    # Previously unscoped: showed every user's command history to every other user.
+    # See coordinator_agent/service.py list_workflows() for the actual fix.
+    return [adapt_workflow(serialize_workflow(run)) for run in service.list_workflows(user=current_user)]
 
 
 @router.get(
@@ -133,9 +138,13 @@ def recent_workflows(service: CoordinatorRuntimeService = Depends(get_service)) 
     response_model=AgentCommandWorkflowResponse,
     dependencies=[Depends(require_permissions("agent_command:view"))],
 )
-def get_workflow(workflow_id: str, service: CoordinatorRuntimeService = Depends(get_service)) -> AgentCommandWorkflowResponse:
+def get_workflow(
+    workflow_id: str,
+    current_user: User = Depends(get_current_user),
+    service: CoordinatorRuntimeService = Depends(get_service),
+) -> AgentCommandWorkflowResponse:
     try:
-        return adapt_workflow(serialize_workflow(service.get_workflow(workflow_id)))
+        return adapt_workflow(serialize_workflow(service.get_workflow(workflow_id, user=current_user)))
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found") from exc
 
@@ -145,6 +154,15 @@ def get_workflow(workflow_id: str, service: CoordinatorRuntimeService = Depends(
     response_model=list[AgentCommandEvent],
     dependencies=[Depends(require_permissions("agent_command:view"))],
 )
-def workflow_events(workflow_id: str, service: CoordinatorRuntimeService = Depends(get_service)) -> list[AgentCommandEvent]:
-    workflow = adapt_workflow(serialize_workflow(service.get_workflow(workflow_id)))
+def workflow_events(
+    workflow_id: str,
+    current_user: User = Depends(get_current_user),
+    service: CoordinatorRuntimeService = Depends(get_service),
+) -> list[AgentCommandEvent]:
+    try:
+        # Previously uncaught: get_workflow()'s LookupError on a missing/not-yours
+        # workflow_id was never caught here, surfacing as an unhandled 500.
+        workflow = adapt_workflow(serialize_workflow(service.get_workflow(workflow_id, user=current_user)))
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found") from exc
     return workflow.timeline_events

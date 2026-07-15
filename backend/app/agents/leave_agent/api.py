@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_permissions
+from app.api.deps import get_current_user, require_permissions, require_self_employee_or_permission
 from app.db.session import get_db
 from app.models.auth import User
 from app.models.employee import Employee
@@ -22,6 +22,7 @@ from app.agents.leave_agent.tools import (
     team_leave_calendar,
 )
 from app.models.employee import LeaveType
+from app.services.auth_service import user_permissions
 
 router = APIRouter()
 
@@ -72,6 +73,15 @@ def apply_leave(
     employee = get_employee_by_id(db, payload.employee_id)
     if not employee:
         raise HTTPException(status_code=404, detail="Employee not found")
+    # Previously unchecked: any authenticated user with "leave:view" could submit a
+    # leave request for any employee_id, since the UI's employee picker and the API
+    # both accepted an arbitrary id with no ownership check. Now restricted to the
+    # requester's own employee record unless they hold "employees:view" (HR/managers
+    # applying leave on someone else's behalf).
+    if not current_user.is_superuser and "employees:view" not in user_permissions(current_user):
+        own_employee = current_user.employee_profile
+        if not own_employee or own_employee.id != employee.id:
+            raise HTTPException(status_code=403, detail="You can only submit leave requests for yourself.")
     try:
         request = create_leave_request(
             db,
@@ -89,7 +99,7 @@ def apply_leave(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.get("/employees/{employee_id}/balances", dependencies=[Depends(require_permissions("employees:view"))])
+@router.get("/employees/{employee_id}/balances", dependencies=[Depends(require_self_employee_or_permission("employees:view"))])
 def employee_leave_balances(employee_id: str, db: Session = Depends(get_db)):
     employee = get_employee_by_id(db, employee_id)
     if not employee:
@@ -97,7 +107,7 @@ def employee_leave_balances(employee_id: str, db: Session = Depends(get_db)):
     return leave_balances(db, employee=employee)
 
 
-@router.get("/employees/{employee_id}/history", dependencies=[Depends(require_permissions("employees:view"))])
+@router.get("/employees/{employee_id}/history", dependencies=[Depends(require_self_employee_or_permission("employees:view"))])
 def employee_leave_history(employee_id: str, db: Session = Depends(get_db)):
     employee = get_employee_by_id(db, employee_id)
     if not employee:

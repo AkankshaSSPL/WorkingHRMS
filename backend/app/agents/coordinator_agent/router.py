@@ -101,26 +101,49 @@ def submit_command(
     current_user: User = Depends(get_current_user),
     service: CoordinatorRuntimeService = Depends(get_service),
 ) -> WorkflowRead:
+    # Previously gated on "agent_command:execute" — a permission never granted
+    # anywhere in the app's frontend (router.tsx only ever checks
+    # "agent_command:view" to admit someone to this page at all), so any role
+    # without a separately-seeded "execute" permission got a 403 trying to submit
+    # a command. Aligned with the rest of the codebase's convention of one
+    # ":view" permission covering an entire page's actions.
     run = service.submit_command(payload.command, current_user.id, payload.metadata)
     return serialize_workflow(run)
 
 
 @router.get("/workflows", response_model=list[WorkflowRead], dependencies=[Depends(require_permissions("agent_command:view"))])
-def list_workflows(service: CoordinatorRuntimeService = Depends(get_service)) -> list[WorkflowRead]:
-    return [serialize_workflow(run) for run in service.list_workflows()]
+def list_workflows(
+    current_user: User = Depends(get_current_user),
+    service: CoordinatorRuntimeService = Depends(get_service),
+) -> list[WorkflowRead]:
+    return [serialize_workflow(run) for run in service.list_workflows(user=current_user)]
 
 
 @router.get("/workflows/{workflow_id}", response_model=WorkflowRead, dependencies=[Depends(require_permissions("agent_command:view"))])
-def get_workflow(workflow_id: str, service: CoordinatorRuntimeService = Depends(get_service)) -> WorkflowRead:
+def get_workflow(
+    workflow_id: str,
+    current_user: User = Depends(get_current_user),
+    service: CoordinatorRuntimeService = Depends(get_service),
+) -> WorkflowRead:
     try:
-        return serialize_workflow(service.get_workflow(workflow_id))
+        return serialize_workflow(service.get_workflow(workflow_id, user=current_user))
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found") from exc
 
 
 @router.get("/workflows/{workflow_id}/events", response_model=list[AgentEventRead], dependencies=[Depends(require_permissions("agent_command:view"))])
-def get_workflow_events(workflow_id: str, service: CoordinatorRuntimeService = Depends(get_service)) -> list[AgentEventRead]:
-    return [serialize_event(event) for event in service.list_events(workflow_id)]
+def get_workflow_events(
+    workflow_id: str,
+    current_user: User = Depends(get_current_user),
+    service: CoordinatorRuntimeService = Depends(get_service),
+) -> list[AgentEventRead]:
+    try:
+        # Previously uncaught: list_events() calls get_workflow() internally, whose
+        # LookupError on a missing workflow_id was never caught here, surfacing as an
+        # unhandled 500 instead of a clean 404.
+        return [serialize_event(event) for event in service.list_events(workflow_id, user=current_user)]
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found") from exc
 
 
 @router.get("/registry", response_model=list[AgentMetadataRead], dependencies=[Depends(require_permissions("agent_command:view"))])

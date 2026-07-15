@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import require_permissions
 from app.db.session import get_db
 from app.models.auth import User
 from app.models.lookup import LookupValue
@@ -14,7 +14,7 @@ router = APIRouter()
 def list_lookups(
     categories: str | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("dashboard:view")),
 ):
     statement = select(LookupValue).where(LookupValue.active.is_(True), LookupValue.deleted_at.is_(None))
     if categories:

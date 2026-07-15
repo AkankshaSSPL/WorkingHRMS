@@ -248,8 +248,6 @@ def attendance_matrix(
         totals = _empty_totals()
         for current_day in days:
             cell = _attendance_cell(item, current_day, record_map.get((item.id, current_day)), leaves)
-            if status and cell["status"] != status.upper():
-                pass
             totals[cell["status"]] = totals.get(cell["status"], 0) + cell.get("count", cell["weight"])
             cells.append(cell)
         if status and not any(cell["status"] == status.upper() for cell in cells):

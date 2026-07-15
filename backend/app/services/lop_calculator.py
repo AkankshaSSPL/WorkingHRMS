@@ -8,8 +8,8 @@ from uuid import UUID
 from sqlalchemy import and_, extract, select
 from sqlalchemy.orm import Session
 
-from app.models.employee import AttendanceRecord, LeaveRequest
-from app.models.employee.models import AttendanceStatus, LeaveRequestStatus
+from app.models.employee import AttendanceRecord, LeaveRequest, LeaveType
+from app.models.employee.models import AttendanceStatus, LeaveCategory, LeaveRequestStatus
 
 
 @dataclass(frozen=True)
@@ -32,8 +32,20 @@ class LOPResult:
         }
 
 
-PAID_LEAVE_TYPES = {"CASUAL LEAVE", "SICK LEAVE", "EARNED LEAVE", "CL", "SL", "EL"}
-UNPAID_LEAVE_TYPES = {"UNPAID LEAVE", "LOP", "UL", "LOSS OF PAY"}
+def _leave_type_category_maps(db: Session) -> tuple[dict[UUID, LeaveCategory], dict[str, LeaveCategory]]:
+    """Build id->category and name->category lookups from the real leave_types
+    table, instead of matching against a hardcoded set of name strings.
+
+    Includes inactive/soft-deleted types too (no active/deleted_at filter):
+    a leave request approved against a type that was later deactivated or
+    renamed must still be classified correctly for payroll history.
+    """
+    by_id: dict[UUID, LeaveCategory] = {}
+    by_name: dict[str, LeaveCategory] = {}
+    for leave_type in db.scalars(select(LeaveType)):
+        by_id[leave_type.id] = leave_type.category
+        by_name.setdefault(str(leave_type.name or "").strip().lower(), leave_type.category)
+    return by_id, by_name
 
 
 def calculate_lop(db: Session, *, employee_id: UUID, month: int, year: int) -> LOPResult:
@@ -70,14 +82,28 @@ def calculate_lop(db: Session, *, employee_id: UUID, month: int, year: int) -> L
         elif status == AttendanceStatus.HALF_DAY:
             present_days += 0.5
 
+    by_id, by_name = _leave_type_category_maps(db)
+
     paid_leave_days = 0.0
     unpaid_leave_days = 0.0
     for leave in approved_leaves:
         days = float(leave.total_days or 0)
-        leave_type = str(leave.leave_type or "").upper()
-        if leave_type in UNPAID_LEAVE_TYPES:
+        category = by_id.get(leave.leave_type_id) if leave.leave_type_id else None
+        if category is None:
+            category = by_name.get(str(leave.leave_type or "").strip().lower())
+        if category == LeaveCategory.UNPAID:
             unpaid_leave_days += days
-        elif leave_type in PAID_LEAVE_TYPES:
+        elif category == LeaveCategory.WFH:
+            # WFH days are already marked PRESENT in attendance (see
+            # mark_wfh_attendance in core.py), so they're already counted
+            # in present_days above -- counting them again here would
+            # double-credit them against LOP.
+            continue
+        else:
+            # PAID, or a type we couldn't resolve at all. Unknown must
+            # default to paid: silently falling through to LOP for any
+            # type not in a hardcoded list is exactly the C1 bug -- being
+            # unpaid must be an explicit, verified fact, never the default.
             paid_leave_days += days
 
     if not working_days:

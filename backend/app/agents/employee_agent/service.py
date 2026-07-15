@@ -27,6 +27,16 @@ from app.models.audit import AuditLog
 from app.models.agents import AgentRun
 
 
+# Maps an internal outcome key to the exact execution_status / workflow_status
+# strings surfaced to the frontend. Keep these three values in sync with
+# whatever badge variants AgentCommandPage / BusinessResponseCards render.
+_OUTCOME_STATUS_LABELS = {
+    "completed": "Completed",
+    "failed": "Failed",
+    "needs_input": "Needs Input",
+}
+
+
 class EmployeeAgent(BaseAgent):
     name = "employee_agent"
     description = "Enterprise employee lifecycle agent for governed employee operations."
@@ -79,7 +89,11 @@ class EmployeeAgent(BaseAgent):
             employee = self._resolve_employee(command)
             if employee and employee.reporting_manager:
                 return self._employee_card_response(command, employee.reporting_manager, "Reporting manager")
-            return self._status_response("Reporting manager unavailable", "No reporting manager was found for this employee.")
+            return self._status_response(
+                "Reporting manager unavailable",
+                "No reporting manager was found for this employee.",
+                outcome="failed",
+            )
 
         if parsed_action == EmployeeAgentAction.SHOW_PROFILE:
             employee = self._resolve_employee(command)
@@ -99,14 +113,30 @@ class EmployeeAgent(BaseAgent):
     def _request_approval(self, action: EmployeeAgentAction, command: str, user_id: UUID | None, workflow_id: str) -> dict[str, Any]:
         payload = self._approval_payload(action, command)
         if action in self.approval_required_actions and action != EmployeeAgentAction.CREATE and not payload.get("employee_id"):
-            return self._status_response("Employee not found", "I could not find the employee record to update. Please include the employee name as it appears in the employee list.")
+            return self._status_response(
+                "Employee not found",
+                "I could not find the employee record to update. Please include the employee name as it appears in the employee list.",
+                outcome="failed",
+            )
         if action == EmployeeAgentAction.UPDATE_SALARY and payload.get("fields", {}).get("current_salary") is None:
-            return self._status_response("Salary amount needed", "Please include the new salary amount, for example: Update Nikita salary to 120000.")
+            return self._status_response(
+                "Salary amount needed",
+                "Please include the new salary amount, for example: Update Nikita salary to 120000.",
+                outcome="needs_input",
+            )
         if action == EmployeeAgentAction.CHANGE_MANAGER and payload.get("proposed_value") and payload.get("fields", {}).get("reporting_manager_id") is None:
-            return self._status_response("Manager not found", f"I could not find {payload['proposed_value']} in the employee directory. Onboard or add the manager first, then try again.")
+            return self._status_response(
+                "Manager not found",
+                f"I could not find {payload['proposed_value']} in the employee directory. Onboard or add the manager first, then try again.",
+                outcome="failed",
+            )
         fields = payload.get("fields") or {}
         if action in {EmployeeAgentAction.UPDATE, EmployeeAgentAction.CHANGE_MANAGER, EmployeeAgentAction.CHANGE_DEPARTMENT} and not any(value is not None for value in fields.values()):
-            return self._status_response("Update details needed", "Please include the employee name and the field you want to update.")
+            return self._status_response(
+                "Update details needed",
+                "Please include the employee name and the field you want to update.",
+                outcome="needs_input",
+            )
         approval_id = approval_guard.require_approval(
             module_name="employee",
             action_name=str(action),
@@ -150,12 +180,24 @@ class EmployeeAgent(BaseAgent):
     def _request_confirmation(self, action: EmployeeAgentAction, command: str) -> dict[str, Any]:
         payload = self._approval_payload(action, command)
         if not payload.get("employee_id"):
-            return self._status_response("Employee not found", "I could not find the employee record to update. Please include the employee name as it appears in the employee list.")
+            return self._status_response(
+                "Employee not found",
+                "I could not find the employee record to update. Please include the employee name as it appears in the employee list.",
+                outcome="failed",
+            )
         fields = payload.get("fields") or {}
         if not any(value is not None for value in fields.values()):
             if action == EmployeeAgentAction.CHANGE_MANAGER and payload.get("proposed_value"):
-                return self._status_response("Manager not found", f"I could not find {payload['proposed_value']} in the employee directory. Add the manager first, then try again.")
-            return self._status_response("Update details needed", "Please include the employee name and the field you want to update.")
+                return self._status_response(
+                    "Manager not found",
+                    f"I could not find {payload['proposed_value']} in the employee directory. Add the manager first, then try again.",
+                    outcome="failed",
+                )
+            return self._status_response(
+                "Update details needed",
+                "Please include the employee name and the field you want to update.",
+                outcome="needs_input",
+            )
         return {
             "agent": self.name,
             "agent_display_name": "Employee Agent",
@@ -176,12 +218,24 @@ class EmployeeAgent(BaseAgent):
     def _handle_confirmation(self, command: str, user_id: UUID | None) -> dict[str, Any]:
         pending = self._latest_confirmation(user_id)
         if not pending:
-            return self._status_response("Nothing to confirm", "I could not find a pending employee update. Please describe the update first.")
+            return self._status_response(
+                "Nothing to confirm",
+                "I could not find a pending employee update. Please describe the update first.",
+                outcome="failed",
+            )
         normalized = command.strip().lower()
         if normalized in {"no", "cancel", "do not update", "don't update"}:
-            return self._status_response("Update cancelled", "The employee update was cancelled. No employee data was changed.")
+            return self._status_response(
+                "Update cancelled",
+                "The employee update was cancelled. No employee data was changed.",
+                outcome="completed",
+            )
         if normalized not in {"yes", "confirm", "proceed", "apply", "save", "yes update"}:
-            return self._status_response("Confirmation needed", "Reply Yes to apply the employee update or No to cancel it.")
+            return self._status_response(
+                "Confirmation needed",
+                "Reply Yes to apply the employee update or No to cancel it.",
+                outcome="needs_input",
+            )
         payload = pending.get("payload") or {}
         employee_id = payload.get("employee_id")
         fields = {key: value for key, value in (payload.get("fields") or {}).items() if value is not None}
@@ -295,17 +349,34 @@ class EmployeeAgent(BaseAgent):
             },
         }
 
-    def _status_response(self, title: str, summary: str) -> dict[str, Any]:
+    def _status_response(self, title: str, summary: str, *, outcome: str = "failed") -> dict[str, Any]:
+        """Build a status_banner response for a non-happy-path outcome.
+
+        `outcome` must be one of "completed", "failed", or "needs_input" and is
+        the single source of truth for the execution_status / workflow_status
+        strings the frontend uses to color the response badge. Every call site
+        must pass this explicitly — no silent defaulting to "Completed" for
+        outcomes that are not actually successful.
+        """
+        if outcome not in _OUTCOME_STATUS_LABELS:
+            raise ValueError(f"Unknown status_response outcome: {outcome!r}")
+        status_label = _OUTCOME_STATUS_LABELS[outcome]
         return {
             "agent": self.name,
             "agent_display_name": "Employee Agent",
             "action": "status",
             "message": summary,
             "operation_summary": title,
-            "execution_status": "Completed",
-            "workflow_status": "Completed",
+            "execution_status": status_label,
+            "workflow_status": status_label,
             "execution_summary": summary,
-            "structured_response": {"type": "status_banner", "title": title, "summary": summary, "payload": {}},
+            "structured_response": {
+                "type": "status_banner",
+                "title": title,
+                "summary": summary,
+                "outcome": outcome,
+                "payload": {},
+            },
         }
 
     def _approval_payload(self, action: EmployeeAgentAction, command: str) -> dict[str, Any]:

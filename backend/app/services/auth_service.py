@@ -15,17 +15,46 @@ from app.core.security import (
 )
 from app.models.auth import Permission, RefreshToken, Role, User
 
+# Precomputed bcrypt hash of an arbitrary password that no real account uses.
+# authenticate() runs verify_password() against this when the account doesn't
+# exist, so a bcrypt check always happens either way — otherwise "no such
+# user" returns near-instantly while "wrong password" takes ~100ms+, and that
+# timing gap lets an attacker enumerate valid emails (e.g. probe for HR/admin
+# accounts) without ever guessing a password.
+_TIMING_SAFE_DUMMY_HASH = "$2b$12$VC/NlTIpR/KnyVCDgYmFaeoZyW0EqNHziD1msQsuu.eKE4DbIJ0eO"
+
 ROLE_NAMES = ["Super Admin", "HR Admin", "HR Executive", "Manager", "Employee"]
 
 PERMISSIONS = {
     "dashboard:view": "View dashboard",
     "employees:view": "View employees",
+    # NEW: separates write access (create/update/delete) from read access on
+    # employees. Previously every employee mutation was gated by
+    # "employees:view" alone -- and both Manager and HR Executive hold that
+    # permission, so either role could create, edit, or delete any employee
+    # record just by virtue of being allowed to see the directory. This is
+    # the write-scoped counterpart; only roles that should be able to
+    # mutate employee records hold it (see ROLE_PERMISSION_CODES below).
+    "employees:manage": "Create, update, or delete employees",
     "candidates:view": "View candidates",
     "onboarding:view": "View onboarding",
     "attendance:view": "View attendance",
     "leave:view": "View leave",
     "payroll:view": "View payroll",
+    # NEW: write-scoped counterpart to payroll:view, same rationale as
+    # employees:manage above. Not currently exploitable (only Super Admin
+    # and HR Admin hold payroll:view today), but a permission literally
+    # named "view" should never be what gates a mutation -- the next role
+    # that legitimately needs payroll:view for reporting purposes shouldn't
+    # silently inherit payroll write access as a side effect.
+    "payroll:manage": "Create, update, or delete payroll components",
     "documents:view": "View documents",
+    # NEW: gates verify/reject on employee documents (documents.py). Kept at
+    # the same tier as approvals:manage — HR Admin and Super Admin only, not
+    # HR Executive — since verifying a document is a decision-making action,
+    # not a view/create action, and HR Executive currently holds no other
+    # "manage"-tier permission either.
+    "documents:verify": "Verify or reject employee documents",
     "assets:view": "View assets",
     "offboarding:view": "View offboarding",
     "approvals:view": "View approvals",
@@ -33,6 +62,9 @@ PERMISSIONS = {
     "agent_command:view": "View agent command center",
     "audit_logs:view": "View audit logs",
     "settings:view": "View settings",
+    # NEW: write-scoped counterpart to settings:view, for masters CRUD
+    # (POST/PATCH/DELETE /masters/{type}). Same rationale as employees:manage.
+    "settings:manage": "Create, update, or delete master data / settings",
 }
 
 ROLE_PERMISSION_CODES = {
@@ -40,12 +72,15 @@ ROLE_PERMISSION_CODES = {
     "HR Admin": [
         "dashboard:view",
         "employees:view",
+        "employees:manage",
         "candidates:view",
         "onboarding:view",
         "attendance:view",
         "leave:view",
         "payroll:view",
+        "payroll:manage",
         "documents:view",
+        "documents:verify",
         "assets:view",
         "offboarding:view",
         "approvals:view",
@@ -53,6 +88,7 @@ ROLE_PERMISSION_CODES = {
         "agent_command:view",
         "audit_logs:view",
         "settings:view",
+        "settings:manage",
     ],
     "HR Executive": [
         "dashboard:view",
@@ -87,6 +123,12 @@ class AuthService:
     def authenticate(self, email: str, password: str) -> User | None:
         user = self.get_user_by_email(email)
         if not user or not user.is_active:
+            # Run a bcrypt check against a dummy hash anyway, so this branch
+            # takes roughly the same time as a real failed-password check
+            # below. Without this, "no such user" returns near-instantly
+            # while a real account with a wrong password takes ~100ms+,
+            # letting an attacker enumerate valid emails via response timing.
+            verify_password(password, _TIMING_SAFE_DUMMY_HASH)
             return None
         if not verify_password(password, user.password_hash):
             return None
