@@ -31,6 +31,17 @@ function storeRefreshToken(token: string | null) {
   }
 }
 
+// Shared across all callers of refreshSession(). Without this, a burst of
+// simultaneous 401s (e.g. several queries firing on page load right as the
+// access token expires) each call refreshSession() independently. The
+// backend revokes the old refresh token the instant the *first* call
+// succeeds, so the second concurrent call — still holding the now-revoked
+// token — gets rejected and its catch-block wipes the whole session, even
+// though the first call just succeeded and the session is actually fine.
+// Deduping into one in-flight promise means every concurrent caller awaits
+// the same single refresh instead of racing each other.
+let inFlightRefresh: Promise<string | null> | null = null;
+
 export const useAuthStore = create<AuthState>((set, get) => ({
   accessToken: null,
   refreshToken: getStoredRefreshToken(),
@@ -39,15 +50,26 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   login: async (email, password) => {
     set({ status: "loading" });
-    const tokens = await loginRequest(email, password);
-    storeRefreshToken(tokens.refresh_token);
-    const user = await meRequest(tokens.access_token);
-    set({
-      accessToken: tokens.access_token,
-      refreshToken: tokens.refresh_token,
-      user,
-      status: "authenticated",
-    });
+    try {
+      const tokens = await loginRequest(email, password);
+      storeRefreshToken(tokens.refresh_token);
+      const user = await meRequest(tokens.access_token);
+      set({
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token,
+        user,
+        status: "authenticated",
+      });
+    } catch (error) {
+      // Without this, a failure here (e.g. loginRequest succeeds but the
+      // follow-up meRequest fails due to a network blip or backend hiccup)
+      // left status stuck on "loading" forever, since nothing ever set it
+      // back — the user would be stranded on the loading skeleton with no
+      // way out except a hard refresh.
+      storeRefreshToken(null);
+      set({ accessToken: null, refreshToken: null, user: null, status: "unauthenticated" });
+      throw error;
+    }
   },
 
   logout: async () => {
@@ -83,19 +105,30 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   refreshSession: async () => {
+    // If a refresh is already in flight (e.g. several queries hit a 401 at
+    // once), every caller awaits that same promise instead of each firing
+    // its own refresh call and racing to revoke each other's tokens.
+    if (inFlightRefresh) return inFlightRefresh;
+
     const refreshToken = get().refreshToken ?? getStoredRefreshToken();
     if (!refreshToken) return null;
 
-    try {
-      const tokens = await refreshRequest(refreshToken);
-      storeRefreshToken(tokens.refresh_token);
-      set({ accessToken: tokens.access_token, refreshToken: tokens.refresh_token });
-      return tokens.access_token;
-    } catch {
-      storeRefreshToken(null);
-      set({ accessToken: null, refreshToken: null, user: null, status: "unauthenticated" });
-      return null;
-    }
+    inFlightRefresh = (async () => {
+      try {
+        const tokens = await refreshRequest(refreshToken);
+        storeRefreshToken(tokens.refresh_token);
+        set({ accessToken: tokens.access_token, refreshToken: tokens.refresh_token });
+        return tokens.access_token;
+      } catch {
+        storeRefreshToken(null);
+        set({ accessToken: null, refreshToken: null, user: null, status: "unauthenticated" });
+        return null;
+      } finally {
+        inFlightRefresh = null;
+      }
+    })();
+
+    return inFlightRefresh;
   },
 
   hasPermission: (permission) => {

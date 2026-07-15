@@ -40,6 +40,11 @@ export type LeaveWorkspace = {
   calendar: LeaveRequest[];
 };
 
+export type MyLeaveWorkspace = {
+  balances: LeaveBalance[];
+  history: LeaveRequest[];
+};
+
 export type LeavePolicy = {
   id: string;
   name: string;
@@ -93,4 +98,16 @@ export async function getLeaveWorkspace(): Promise<LeaveWorkspace> {
     };
   });
   return { employees, pending, calendar };
+}
+
+// Self-service workspace: only the calls a non-manager can legitimately make about
+// themselves. Deliberately does NOT call getEmployees(), getPendingLeaveRequests(),
+// or getLeaveCalendar() — those require employees:view / approvals:view and belong
+// to the manager workspace above.
+export async function getMyLeaveWorkspace(employeeId: string): Promise<MyLeaveWorkspace> {
+  const [balances, history] = await Promise.all([
+    getEmployeeLeaveBalances(employeeId),
+    getEmployeeLeaveHistory(employeeId),
+  ]);
+  return { balances, history };
 }

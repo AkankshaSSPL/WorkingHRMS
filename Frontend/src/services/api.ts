@@ -1,6 +1,17 @@
 import { useAuthStore } from "@/stores/authStore";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8001/api/v1";
+// No fallback here on purpose. If VITE_API_BASE_URL is unset, the app should
+// fail loudly at startup instead of silently talking to the wrong backend
+// port (previously defaulted to :8001, which doesn't match the documented
+// backend port of :8000 and caused confusing "API request failed" errors).
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+
+if (!API_BASE_URL) {
+  throw new Error(
+    "VITE_API_BASE_URL is not set. Copy Frontend/.env.example to Frontend/.env and set VITE_API_BASE_URL " +
+      "to the backend's API base (e.g. http://127.0.0.1:8000/api/v1).",
+  );
+}
 
 export async function apiGet<T>(path: string): Promise<T> {
   return apiRequest<T>(path, { method: "GET" });

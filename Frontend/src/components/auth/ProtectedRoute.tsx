@@ -5,7 +5,7 @@ import { LoadingSkeleton } from "@/components/ui-system";
 import { useAuthStore } from "@/stores/authStore";
 
 type ProtectedRouteProps = {
-  permission?: string;
+  permission?: string | string[];
 };
 
 export function ProtectedRoute({ permission }: ProtectedRouteProps) {
@@ -31,10 +31,15 @@ export function ProtectedRoute({ permission }: ProtectedRouteProps) {
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
 
-  if (permission && !hasPermission(permission)) {
+  // Supports either a single permission or a list of permissions that must ALL be
+  // held — needed for pages like the manager Leave workspace that combine data
+  // gated behind more than one permission (leave:view + approvals:view + employees:view).
+  const requiredPermissions = permission ? (Array.isArray(permission) ? permission : [permission]) : [];
+  const isAuthorized = requiredPermissions.every((required) => hasPermission(required));
+
+  if (requiredPermissions.length && !isAuthorized) {
     return <Navigate to="/unauthorized" replace />;
   }
 
   return <Outlet />;
 }
-

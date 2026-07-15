@@ -9,6 +9,7 @@ import {
   Gauge,
   Landmark,
   LibraryBig,
+  ListChecks,
   LogOut,
   PanelLeftClose,
   PanelLeftOpen,
@@ -33,7 +34,17 @@ export const sidebarItems: SidebarMenuItem[] = [
   { name: "Candidates", href: "/candidates", icon: UserPlus, permission: "candidates:view" },
   { name: "Onboarding", href: "/onboarding", icon: BadgeCheck, permission: "onboarding:view" },
   { name: "Attendance", href: "/attendance", icon: CalendarClock, permission: "attendance:view" },
-  { name: "Leave", href: "/leave", icon: ClipboardCheck, permission: "leave:view" },
+  // Split in two: "My Leave" is visible to anyone who can reach /leave/mine
+  // (everyone with leave:view, e.g. base Employees). "Leave Workspace" is
+  // gated on approvals:view as a UX proxy for the route's real requirement
+  // (leave:view + approvals:view + employees:view) — every role that holds
+  // approvals:view already holds the other two, and Employee is the only
+  // role missing approvals:view, so this reproduces the route's actual
+  // access set exactly. Without this split, Employee-role users saw a
+  // single "Leave" link that pointed at a route they're no longer allowed
+  // into, with no way to reach the page that was actually built for them.
+  { name: "My Leave", href: "/leave/mine", icon: ClipboardCheck, permission: "leave:view" },
+  { name: "Leave Workspace", href: "/leave", icon: ListChecks, permission: "approvals:view" },
   { name: "Payroll", href: "/payroll", icon: Landmark, permission: "payroll:view" },
   { name: "Documents", href: "/documents", icon: FileText, permission: "documents:view" },
   { name: "Assets", href: "/assets", icon: BriefcaseBusiness, permission: "assets:view" },

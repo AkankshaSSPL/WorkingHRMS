@@ -10,6 +10,7 @@ import { EmployeesPage } from "@/pages/EmployeesPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { MastersPage } from "@/pages/MastersPage";
 import { LeavePage } from "@/pages/LeavePage";
+import { MyLeavePage } from "@/pages/MyLeavePage";
 import { OnboardingPage } from "@/pages/OnboardingPage";
 import { PayrollPage } from "@/pages/PayrollPage";
 import { PlaceholderPage } from "@/pages/PlaceholderPage";
@@ -52,6 +53,10 @@ export const router = createBrowserRouter([
   },
   {
     element: <ProtectedRoute permission="leave:view" />,
+    children: [{ path: "/leave/mine", element: <MyLeavePage /> }],
+  },
+  {
+    element: <ProtectedRoute permission={["leave:view", "approvals:view", "employees:view"]} />,
     children: [{ path: "/leave", element: <LeavePage /> }],
   },
   {

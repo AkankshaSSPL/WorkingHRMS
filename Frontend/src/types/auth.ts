@@ -4,6 +4,7 @@ export type AuthUser = {
   full_name: string;
   is_active: boolean;
   is_superuser: boolean;
+  employee_id: string | null;
   roles: string[];
   permissions: string[];
 };
@@ -13,4 +14,3 @@ export type TokenResponse = {
   refresh_token: string;
   token_type: "bearer";
 };
-

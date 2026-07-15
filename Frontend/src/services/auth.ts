@@ -1,6 +1,16 @@
 import type { AuthUser, TokenResponse } from "@/types/auth";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8001/api/v1";
+// No fallback here on purpose — same reasoning as services/api.ts. This file
+// has its own independent fetch logic and previously duplicated the same
+// wrong :8001 default, so it's fixed the same way here.
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+
+if (!API_BASE_URL) {
+  throw new Error(
+    "VITE_API_BASE_URL is not set. Copy Frontend/.env.example to Frontend/.env and set VITE_API_BASE_URL " +
+      "to the backend's API base (e.g. http://127.0.0.1:8000/api/v1).",
+  );
+}
 
 export async function loginRequest(email: string, password: string): Promise<TokenResponse> {
   const body = new URLSearchParams();
